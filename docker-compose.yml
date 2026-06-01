@@ -10,3 +10,9 @@ services:
     container_name: inventory-service
     ports:
       - "8002:8000"
+
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    ports:
+      - "8003:8000"
