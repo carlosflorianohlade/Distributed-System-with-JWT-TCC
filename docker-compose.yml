@@ -1,0 +1,12 @@
+services:
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    ports:
+      - "8000:8000"
+
+  inventory-service:
+    build: ./inventory-service
+    container_name: inventory-service
+    ports:
+      - "8002:8000"
