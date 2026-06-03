@@ -5,6 +5,16 @@ services:
     ports:
       - "8000:8000"
 
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    ports:
+      - "8001:8000"
+    depends_on:
+      - inventory-service
+      - payment-service
+      - shipping-service
+
   inventory-service:
     build: ./inventory-service
     container_name: inventory-service
@@ -16,3 +26,9 @@ services:
     container_name: payment-service
     ports:
       - "8003:8000"
+
+  shipping-service:
+    build: ./shipping-service
+    container_name: shipping-service
+    ports:
+      - "8004:8000"
