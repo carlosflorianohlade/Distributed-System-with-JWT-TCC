@@ -8,7 +8,7 @@ from jose import jwt, JWTError
 app = FastAPI(title = "Order Service")
 
 SECRET_KEY = "super-secret-key"
-ALGORITH = "HS256"
+ALGORITHM = "HS256"
 
 INVENTORY_SERVICE_URL = "http://inventory-service:8000"
 PAYMENT_SERVICE_URL = "http://payment-service:8000"
@@ -19,7 +19,6 @@ orders = {}
 class CreateOrderRequest(BaseModel):
     product_id: str
     quantity: int
-    amount: float
     address: str
     fail_payment: bool = False
     fail_shipping: bool = False
@@ -43,7 +42,7 @@ def verify_token(authorization: str | None) -> dict:
         payload = jwt.decode(
             token,
             SECRET_KEY,
-            algorithms=[ALGORITH]
+            algorithms=[ALGORITHM]
         )
         return payload
     except JWTError:
@@ -84,22 +83,30 @@ async def create_order(
 
     username = user["sub"]
     transaction_id = str(uuid4())
-
-    orders[transaction_id] = {
-        "transaction_id": transaction_id,
-        "username": username,
-        "product_id": request.product_id,
-        "quantity": request.quantity,
-        "amount": request.amount,
-        "address": request.address,
-        "status": "TRYING",
-        "completed_steps": []
-    }
-
     completed_steps = []
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
+            product_response = await client.get(
+                f"{INVENTORY_SERVICE_URL}/products/{request.product_id}"
+            )
+            product_response.raise_for_status()
+
+            product = product_response.json()
+            amount = product["price"] * request.quantity
+
+            orders[transaction_id] = {
+                "transaction_id": transaction_id,
+                "username": username,
+                "product_id": request.product_id,
+                "quantity": request.quantity,
+                "unit_price": product["price"],
+                "amount": amount,
+                "address": request.address,
+                "status": "TRYING",
+                "completed_steps": []
+            }
+
             inventory_response = await client.post(
                 f"{INVENTORY_SERVICE_URL}/tcc/try",
                 json={
@@ -116,7 +123,7 @@ async def create_order(
                 json={
                     "transaction_id": transaction_id,
                     "username": username,
-                    "amount": request.amount,
+                    "amount": amount,
                     "fail": request.fail_payment
                 }
             )
@@ -145,10 +152,25 @@ async def create_order(
             return {
                 "status": "ORDER_CONFIRMED",
                 "transaction_id": transaction_id,
+                "product_id": request.product_id,
+                "quantity": request.quantity,
+                "unit_price": product["price"],
+                "amount": amount,
                 "completed_steps": completed_steps
             }
-        
+
         except Exception as error:
+            if transaction_id not in orders:
+                orders[transaction_id] = {
+                    "transaction_id": transaction_id,
+                    "username": username,
+                    "product_id": request.product_id,
+                    "quantity": request.quantity,
+                    "address": request.address,
+                    "status": "CANCELLING",
+                    "completed_steps": []
+                }
+
             orders[transaction_id]["status"] = "CANCELLING"
             orders[transaction_id]["error"] = str(error)
             orders[transaction_id]["completed_steps"] = completed_steps
@@ -163,7 +185,7 @@ async def create_order(
 
             raise HTTPException(
                 status_code=500,
-                detail = {
+                detail={
                     "message": "Ordine annullato a causa di un errore durante il TCC",
                     "transaction_id": transaction_id,
                     "completed_steps": completed_steps,

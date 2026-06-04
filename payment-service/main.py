@@ -5,11 +5,11 @@ app = FastAPI(title = "Payment Service")
 
 accounts = {
     "gabriele" : {
-        "balance" : 1000,
+        "balance" : 7000,
         "blocked" : 0
     },
-    "mario" : {
-        "balance" : 500,
+    "carlos" : {
+        "balance" : 10000,
         "blocked" : 0
     }
 }

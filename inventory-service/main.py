@@ -5,18 +5,21 @@ app = FastAPI(title = "Inventory Service")
 
 products = {
     "p1": {
-        "name" : "Laptop",
-        "stock" : 10,
-        "reserved" : 0
+        "name": "Laptop",
+        "stock": 10,
+        "price": 799.99,
+        "reserved": 0
     },
     "p2": {
-        "name" : "Mouse",
-        "stock" : 20,
+        "name": "Mouse",
+        "stock": 20,
+        "price": 69.99,
         "reserved" : 0
     },
     "p3": {
-        "name" : "Keyboard",
-        "stock" : 7,
+        "name": "Keyboard",
+        "stock": 7,
+        "price": 130.99,
         "reserved" : 0
     }
 }
@@ -43,6 +46,25 @@ def get_state():
     return{
         "products" : products,
         "reservations" : reservations
+    }
+
+@app.get("/products/{product_id}")
+def get_product(product_id: str):
+    product = products.get(product_id)
+
+    if product is None:
+        raise HTTPException(
+            status_code = 404,
+            detail = "Prodotto non trovato"
+        )
+    
+    return{
+        "product_id": product_id,
+        "name": product["name"],
+        "price": product["price"],
+        "stock": product["stock"],
+        "reserved": product["reserved"],
+        "available": product["stock"] - product["reserved"]
     }
 
 @app.post("/tcc/try")

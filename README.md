@@ -232,6 +232,7 @@ POST /orders
 ```http
 GET  /health
 GET  /state
+GET  /products/{product_id}
 POST /tcc/try
 PUT  /tcc/confirm
 PUT  /tcc/cancel
@@ -278,7 +279,6 @@ Body:
 {
   "product_id": "p1",
   "quantity": 2,
-  "amount": 100,
   "address": "Via Roma 1",
   "fail_payment": false,
   "fail_shipping": false
@@ -317,7 +317,6 @@ To simulate a payment failure, send:
 {
   "product_id": "p1",
   "quantity": 2,
-  "amount": 100,
   "address": "Via Roma 1",
   "fail_payment": true,
   "fail_shipping": false
@@ -344,7 +343,6 @@ To simulate a shipping failure, send:
 {
   "product_id": "p1",
   "quantity": 2,
-  "amount": 100,
   "address": "Via Roma 1",
   "fail_payment": false,
   "fail_shipping": true
@@ -489,8 +487,3 @@ This project is a didactic implementation.
 The services currently store their state in memory, so data is reset when containers are restarted.
 
 The goal is not to implement a production-ready order management system, but to demonstrate the coordination of distributed services using JWT and the Try-Confirm/Cancel pattern.
-
-## Authors
-
-- Carlos Floriano Hlade
-- Gabriele Citarei
