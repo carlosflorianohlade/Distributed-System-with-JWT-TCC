@@ -199,17 +199,17 @@ async def confirm_all(client: httpx.AsyncClient, transaction_id: str):
     await client.put(
         f"{INVENTORY_SERVICE_URL}/tcc/confirm",
         json = body
-    )
+    ).raise_for_status()
 
     await client.put(
         f"{PAYMENT_SERVICE_URL}/tcc/confirm",
         json = body
-    )
+    ).raise_for_status()
 
     await client.put(
         f"{SHIPPING_SERVICE_URL}/tcc/confirm",
         json = body
-    )
+    ).raise_for_status()
 
 async def cancel_completed_steps(client: httpx.AsyncClient, transaction_id: str, completed_steps: list[str]):
     body = {"transaction_id": transaction_id}

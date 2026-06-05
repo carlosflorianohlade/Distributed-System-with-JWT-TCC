@@ -28,7 +28,7 @@ class TransactionRequest(BaseModel):
 @app.get("/health")
 def health_check():
     return {
-        "services" : "payment-service",
+        "service" : "payment-service",
         "status" : "UP"
     }
 
@@ -49,7 +49,7 @@ def try_payment(request: TryPaymentRequest):
     
     if request.transaction_id in payments:
         return {
-            "status" : "ALREDY BLOCKED",
+            "status" : "ALREADY_BLOCKED",
             "transaction_id" : request.transaction_id
         }
     
@@ -94,7 +94,7 @@ def confirm_payment(request: TransactionRequest):
     
     if payment["status"] == "CONFIRMED":
         return {
-            "status" : "ALREDY_CONFIRMED",
+            "status" : "ALREADY_CONFIRMED",
             "transaction_id" : request.transaction_id
         }
     
@@ -128,14 +128,14 @@ def cancel_payment(request: TransactionRequest):
     
     if payment["status"] == "CANCELLED":
         return {
-            "status" : "ALREDY_CANCELLED",
+            "status" : "ALREADY_CANCELLED",
             "transaction_id" : request.transaction_id
         }
     
     if payment["status"] == "CONFIRMED":
         raise HTTPException(
             status_code = 409,
-            detail = "Pagamento già confermato, impossibile annulare"
+            detail = "Pagamento già confermato, impossibile annullare"
         )
     
     account = accounts[payment["username"]]

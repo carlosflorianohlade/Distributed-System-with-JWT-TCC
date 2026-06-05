@@ -81,7 +81,7 @@ def confirm_shipping(request: TransactionRequest):
         "transaction_id": request.transaction_id
     }
 
-@app.post("/tcc/cancel")
+@app.put("/tcc/cancel")
 def cancel_shipping(request: TransactionRequest):
     shipment = shipments.get(request.transaction_id)
 

@@ -34,7 +34,7 @@ def create_access_token(data: dict) -> str:
         minutes=ACCESS_TOKEN_EXPIRE_MINUTES
     )
 
-    to_encode.update({"exp":expire})
+    to_encode.update({"exp": expire})
 
     encoded_jwt = jwt.encode(
         to_encode,
@@ -58,7 +58,7 @@ def login(request: LoginRequest):
     if user is None or user["password"] != request.password:
         raise HTTPException(
             status_code=401,
-            detail = "Credienziali non valide"
+            detail = "Credenziali non valide"
         )
     
     token = create_access_token(

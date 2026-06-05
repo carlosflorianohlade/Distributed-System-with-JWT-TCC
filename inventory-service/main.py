@@ -36,14 +36,14 @@ class TransactionRequest(BaseModel):
 
 @app.get("/health")
 def health_check():
-    return{
+    return {
         "service" : "inventory-service",
         "status" : "UP"
     }
 
 @app.get("/state")
 def get_state():
-    return{
+    return {
         "products" : products,
         "reservations" : reservations
     }
@@ -58,7 +58,7 @@ def get_product(product_id: str):
             detail = "Prodotto non trovato"
         )
     
-    return{
+    return {
         "product_id": product_id,
         "name": product["name"],
         "price": product["price"],
@@ -71,7 +71,7 @@ def get_product(product_id: str):
 def try_inventory(request: TryRequest):
     if request.transaction_id in reservations:
         return{
-            "status" : "ALREDY_RESERVED",
+            "status" : "ALREADY_RESERVED",
             "transaction_id" : request.transaction_id
         }
     
@@ -116,7 +116,7 @@ def confirm_inventory(request: TransactionRequest):
     
     if reservation["status"] == "CONFIRMED":
         return {
-            "status" : "ALREDY CONFIRMED",
+            "status" : "ALREADY_CONFIRMED",
             "transaction_id" : request.transaction_id
         }
     
@@ -150,7 +150,7 @@ def cancel_inventory(request: TransactionRequest):
     
     if reservation["status"] == "CANCELLED":
         return {
-            "status" : "ALREDY_CANCELLED",
+            "status" : "ALREADY_CANCELLED",
             "transaction_id" : request.transaction_id
         }
 
