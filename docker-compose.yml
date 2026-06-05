@@ -4,6 +4,8 @@ services:
     container_name: auth-service
     ports:
       - "8000:8000"
+    environment:
+      - JWT_SECRET=super_secret_key
 
   order-service:
     build: ./order-service
@@ -14,6 +16,8 @@ services:
       - inventory-service
       - payment-service
       - shipping-service
+    environment:
+      - JWT_SECRET=super_secret_key
 
   inventory-service:
     build: ./inventory-service

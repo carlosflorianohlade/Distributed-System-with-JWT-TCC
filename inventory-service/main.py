@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 app = FastAPI(title = "Inventory Service")
 
@@ -27,9 +27,9 @@ products = {
 reservations = {}
 
 class TryRequest(BaseModel):
-    transaction_id: str
-    product_id: str
-    quantity: int
+    transaction_id: str = Field(min_length=1)
+    product_id: str = Field(min_length=1)
+    quantity: int = Field(gt=0)
 
 class TransactionRequest(BaseModel):
     transaction_id: str

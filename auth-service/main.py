@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException
@@ -6,7 +7,7 @@ from jose import jwt
 
 app = FastAPI(title="Auth Service")
 
-SECRET_KEY = "super-secret-key"
+SECRET_KEY = os.environ["JWT_SECRET"]
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

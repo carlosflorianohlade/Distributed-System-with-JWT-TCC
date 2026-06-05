@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from decimal import Decimal
 
 app = FastAPI(title = "Payment Service")
 
@@ -17,9 +18,9 @@ accounts = {
 payments = {}
 
 class TryPaymentRequest(BaseModel):
-    transaction_id: str
-    username: str
-    amount: float
+    transaction_id: str = Field(min_length=1)
+    username: str = Field(min_length=1)
+    amount: Decimal = Field(gt=0)
     fail: bool = False
 
 class TransactionRequest(BaseModel):

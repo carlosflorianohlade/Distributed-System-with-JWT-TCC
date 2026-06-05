@@ -1,13 +1,14 @@
-from uuid import uuid4
+import os
 
+from uuid import uuid4
 import httpx
 from fastapi import FastAPI, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from jose import jwt, JWTError
 
 app = FastAPI(title = "Order Service")
 
-SECRET_KEY = "super-secret-key"
+SECRET_KEY = os.environ["JWT_SECRET"]
 ALGORITHM = "HS256"
 
 INVENTORY_SERVICE_URL = "http://inventory-service:8000"
@@ -17,9 +18,9 @@ SHIPPING_SERVICE_URL = "http://shipping-service:8000"
 orders = {}
 
 class CreateOrderRequest(BaseModel):
-    product_id: str
-    quantity: int
-    address: str
+    product_id: str = Field(min_length=1)
+    quantity: int = Field(gt=0)
+    address: str = Field(min_length=1, max_length=300)
     fail_payment: bool = False
     fail_shipping: bool = False
 
@@ -196,38 +197,44 @@ async def create_order(
 async def confirm_all(client: httpx.AsyncClient, transaction_id: str):
     body = {"transaction_id": transaction_id}
 
-    await client.put(
+    inventory_response = await client.put(
         f"{INVENTORY_SERVICE_URL}/tcc/confirm",
         json = body
-    ).raise_for_status()
+    )
+    inventory_response.raise_for_status()
 
-    await client.put(
+    payment_response = await client.put(
         f"{PAYMENT_SERVICE_URL}/tcc/confirm",
         json = body
-    ).raise_for_status()
+    )
+    payment_response.raise_for_status()
 
-    await client.put(
+    shipping_response = await client.put(
         f"{SHIPPING_SERVICE_URL}/tcc/confirm",
         json = body
-    ).raise_for_status()
+    )
+    shipping_response.raise_for_status()
 
 async def cancel_completed_steps(client: httpx.AsyncClient, transaction_id: str, completed_steps: list[str]):
     body = {"transaction_id": transaction_id}
 
     if "shipping" in completed_steps:
-        await client.put(
+        shipping_response = await client.put(
             f"{SHIPPING_SERVICE_URL}/tcc/cancel",
             json = body
         )
+        shipping_response.raise_for_status()
     
     if "payment" in completed_steps:
-        await client.put(
+        payment_response = await client.put(
             f"{PAYMENT_SERVICE_URL}/tcc/cancel",
             json = body
         )
+        payment_response.raise_for_status()
     
     if "inventory" in completed_steps:
-        await client.put(
+        inventory_response = await client.put(
             f"{INVENTORY_SERVICE_URL}/tcc/cancel",
             json = body
         )
+        inventory_response.raise_for_status()
