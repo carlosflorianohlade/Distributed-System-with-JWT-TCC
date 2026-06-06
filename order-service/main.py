@@ -174,16 +174,18 @@ async def create_order(
 
             orders[transaction_id]["status"] = "CANCELLING"
             orders[transaction_id]["error"] = str(error)
-            orders[transaction_id]["completed_steps"] = completed_steps
-
-            await cancel_completed_steps(
-                client=client,
-                transaction_id=transaction_id,
-                completed_steps=completed_steps
-            )
-
+            orders[transaction_id]["completed_steps"] = completed_steps 
+        
+            try:   
+                await cancel_completed_steps(
+                    client=client,
+                    transaction_id=transaction_id,
+                    completed_steps=completed_steps
+                )
+            except Exception as cancel_error:
+                orders[transaction_id]["cancel_error"] = str(cancel_error)
+                
             orders[transaction_id]["status"] = "CANCELLED"
-
             raise HTTPException(
                 status_code=500,
                 detail={

@@ -70,7 +70,7 @@ def get_product(product_id: str):
 @app.post("/tcc/try")
 def try_inventory(request: TryRequest):
     if request.transaction_id in reservations:
-        return{
+        return {
             "status" : "ALREADY_RESERVED",
             "transaction_id" : request.transaction_id
         }
