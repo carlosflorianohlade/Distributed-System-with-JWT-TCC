@@ -143,7 +143,7 @@ def cancel_payment(request: TransactionRequest):
     account["blocked"] -= payment["amount"]
     payment["status"] = "CANCELLED"
 
-    return{
+    return {
         "status" : "CANCEL_OK",
         "transaction_id" : request.transaction_id
     }
