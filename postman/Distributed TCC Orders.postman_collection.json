@@ -31,7 +31,7 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"username\" : \"gabriele\",\n    \"password\" : \"gabrielepass\"\n}",
+          "raw": "{\n    \"username\" : \"carlos\",\n    \"password\" : \"admin\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -69,7 +69,7 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"product_id\": \"p1\",\n  \"quantity\": 3,\n  \"amount\": 400,\n  \"address\": \"Via Roma 1\",\n  \"fail_payment\": false,\n  \"fail_shipping\": false\n}",
+          "raw": "{\n  \"product_id\": \"p1\",\n  \"quantity\": 4,\n  \"address\": \"Via Roma 1\",\n  \"fail_payment\": false,\n  \"fail_shipping\": false\n}",
           "options": {
             "raw": {
               "language": "json"
