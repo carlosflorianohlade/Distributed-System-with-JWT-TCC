@@ -13,14 +13,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 fake_users_db = {
     "gabriele": {
-        "username" : "gabriele",
-        "password" : "gabrielepass",
-        "role" : "customer"
+        "username": "gabriele",
+        "password": "gabrielepass",
+        "role": "customer"
     },
     "carlos": {
-        "username" : "carlos",
-        "password" : "admin",
-        "role" : "admin"
+        "username": "carlos",
+        "password": "admin",
+        "role": "admin"
     }
 }
 
@@ -48,8 +48,8 @@ def create_access_token(data: dict) -> str:
 @app.get("/health")
 def health_check():
     return {
-        "service" : "auth-service",
-        "status" : "UP"
+        "service": "auth-service",
+        "status": "UP"
     }
 
 @app.post("/login")
@@ -64,12 +64,12 @@ def login(request: LoginRequest):
     
     token = create_access_token(
         {
-            "sub" : user["username"],
-            "role" : user["role"]
+            "sub": user["username"],
+            "role": user["role"]
         }
     )
 
     return {
-        "access_token" : token,
-        "token_type" : "bearer"
+        "access_token": token,
+        "token_type": "bearer"
     }
