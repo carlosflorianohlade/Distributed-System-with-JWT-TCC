@@ -5,7 +5,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - JWT_SECRET=super_secret_key
+      JWT_SECRET: ${JWT_SECRET:-super_secret_key}
 
   order-service:
     build: ./order-service
@@ -17,7 +17,15 @@ services:
       - payment-service
       - shipping-service
     environment:
-      - JWT_SECRET=super_secret_key
+      JWT_SECRET: ${JWT_SECRET:-super_secret_key}
+      INVENTORY_SERVICE_URL: http://inventory-service:8000
+      PAYMENT_SERVICE_URL: http://payment-service:8000
+      SHIPPING_SERVICE_URL: http://shipping-service:8000
+      MAX_RETRY_ATTEMPTS: "5"
+      RETRY_DELAY_SECONDS: "1"
+      ORDERS_FILE: /data/orders.json
+    volumes:
+      - order-data:/data
 
   inventory-service:
     build: ./inventory-service
@@ -36,3 +44,6 @@ services:
     container_name: shipping-service
     ports:
       - "8004:8000"
+
+volumes:
+  order-data:

@@ -1,15 +1,15 @@
 import asyncio
+import json
 import os
+from contextlib import asynccontextmanager
 from enum import Enum
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
-
-
-app = FastAPI(title="Order Service")
 
 
 SECRET_KEY = os.environ["JWT_SECRET"]
@@ -19,24 +19,18 @@ INVENTORY_SERVICE_URL = os.getenv(
     "INVENTORY_SERVICE_URL",
     "http://inventory-service:8000",
 )
-
 PAYMENT_SERVICE_URL = os.getenv(
     "PAYMENT_SERVICE_URL",
     "http://payment-service:8000",
 )
-
 SHIPPING_SERVICE_URL = os.getenv(
     "SHIPPING_SERVICE_URL",
     "http://shipping-service:8000",
 )
 
-CONFIRM_MAX_ATTEMPTS = int(
-    os.getenv("CONFIRM_MAX_ATTEMPTS", "5")
-)
-
-CONFIRM_RETRY_DELAY_SECONDS = float(
-    os.getenv("CONFIRM_RETRY_DELAY_SECONDS", "1.0")
-)
+MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", "5"))
+RETRY_DELAY_SECONDS = float(os.getenv("RETRY_DELAY_SECONDS", "1"))
+ORDERS_FILE = Path(os.getenv("ORDERS_FILE", "/data/orders.json"))
 
 PARTICIPANT_URLS = {
     "inventory": INVENTORY_SERVICE_URL,
@@ -48,11 +42,11 @@ PARTICIPANT_URLS = {
 class TransactionStatus(str, Enum):
     TRYING = "TRYING"
     CANCELLING = "CANCELLING"
+    CANCEL_PENDING = "CANCEL_PENDING"
     CANCELLED = "CANCELLED"
-    CANCEL_FAILED = "CANCEL_FAILED"
     CONFIRMING = "CONFIRMING"
-    CONFIRMED = "CONFIRMED"
     CONFIRM_PENDING = "CONFIRM_PENDING"
+    CONFIRMED = "CONFIRMED"
 
 
 class TransactionDecision(str, Enum):
@@ -61,14 +55,11 @@ class TransactionDecision(str, Enum):
     ROLLBACK = "ROLLBACK"
 
 
-class ParticipantOperationStatus(str, Enum):
+class OperationStatus(str, Enum):
     PENDING = "PENDING"
-    NOT_STARTED = "NOT_STARTED"
-    NOT_REQUIRED = "NOT_REQUIRED"
     OK = "OK"
     FAILED = "FAILED"
-    ERROR = "ERROR"
-    RETRYING = "RETRYING"
+    NOT_STARTED = "NOT_STARTED"
 
 
 class CreateOrderRequest(BaseModel):
@@ -84,7 +75,7 @@ class TryPhaseError(Exception):
         self,
         participant: str,
         message: str,
-        status_code: int = 500,
+        status_code: int,
     ):
         super().__init__(message)
         self.participant = participant
@@ -93,6 +84,29 @@ class TryPhaseError(Exception):
 
 
 orders: dict[str, dict] = {}
+
+
+def load_orders() -> None:
+    global orders
+
+    if not ORDERS_FILE.exists():
+        orders = {}
+        return
+
+    try:
+        orders = json.loads(ORDERS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        orders = {}
+
+
+def persist_orders() -> None:
+    ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary_file = ORDERS_FILE.with_suffix(".tmp")
+    temporary_file.write_text(
+        json.dumps(orders, indent=2),
+        encoding="utf-8",
+    )
+    temporary_file.replace(ORDERS_FILE)
 
 
 def verify_token(authorization: str | None) -> dict:
@@ -130,7 +144,27 @@ def verify_token(authorization: str | None) -> dict:
         ) from error
 
 
-def create_transaction(
+def extract_error_detail(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+        if isinstance(body, dict) and body.get("detail") is not None:
+            return str(body["detail"])
+        return str(body)
+    except ValueError:
+        return response.text or f"HTTP {response.status_code}"
+
+
+def map_participant_error(status_code: int) -> int:
+    if status_code == 404:
+        return 404
+    if status_code in {409, 422}:
+        return 409
+    if status_code >= 500:
+        return 503
+    return 500
+
+
+def new_transaction(
     transaction_id: str,
     username: str,
     request: CreateOrderRequest,
@@ -145,94 +179,59 @@ def create_transaction(
         "unit_price": unit_price,
         "amount": amount,
         "address": request.address,
-        "status": TransactionStatus.TRYING,
-        "decision": TransactionDecision.UNDECIDED,
+        "status": TransactionStatus.TRYING.value,
+        "decision": TransactionDecision.UNDECIDED.value,
         "participants": {
-            "inventory": {
-                "try": ParticipantOperationStatus.PENDING,
-                "confirm": ParticipantOperationStatus.NOT_STARTED,
-                "cancel": ParticipantOperationStatus.NOT_STARTED,
-            },
-            "payment": {
-                "try": ParticipantOperationStatus.PENDING,
-                "confirm": ParticipantOperationStatus.NOT_STARTED,
-                "cancel": ParticipantOperationStatus.NOT_STARTED,
-            },
-            "shipping": {
-                "try": ParticipantOperationStatus.PENDING,
-                "confirm": ParticipantOperationStatus.NOT_STARTED,
-                "cancel": ParticipantOperationStatus.NOT_STARTED,
-            },
+            participant: {
+                "try": OperationStatus.PENDING.value,
+                "confirm": OperationStatus.NOT_STARTED.value,
+                "cancel": OperationStatus.NOT_STARTED.value,
+            }
+            for participant in PARTICIPANT_URLS
         },
-        "error": None,
-        "cancel_errors": {},
-        "confirm_errors": {},
+        "last_error": None,
     }
 
 
-def extract_error_detail(response: httpx.Response) -> str:
-    try:
-        body = response.json()
-
-        if isinstance(body, dict):
-            detail = body.get("detail")
-
-            if detail is not None:
-                return str(detail)
-
-        return str(body)
-
-    except ValueError:
-        return response.text or f"HTTP {response.status_code}"
-
-
-def map_participant_status(status_code: int) -> int:
-    if status_code == 404:
-        return 404
-
-    if status_code in {409, 422}:
-        return 409
-
-    if status_code >= 500:
-        return 503
-
-    return 500
-
-
-async def execute_try_request(
+async def try_participant(
     client: httpx.AsyncClient,
     transaction_id: str,
     participant: str,
-    url: str,
     payload: dict,
 ) -> None:
     transaction = orders[transaction_id]
-    participant_state = transaction["participants"][participant]
 
     try:
-        response = await client.post(url, json=payload)
-
+        response = await client.post(
+            f"{PARTICIPANT_URLS[participant]}/tcc/try",
+            json=payload,
+        )
     except httpx.RequestError as error:
-        participant_state["try"] = ParticipantOperationStatus.ERROR
-
+        transaction["participants"][participant]["try"] = (
+            OperationStatus.FAILED.value
+        )
+        persist_orders()
         raise TryPhaseError(
-            participant=participant,
-            message=f"{participant.capitalize()} service non raggiungibile: {error}",
-            status_code=503,
+            participant,
+            f"{participant} non raggiungibile: {error}",
+            503,
         ) from error
 
     if response.is_error:
-        participant_state["try"] = ParticipantOperationStatus.FAILED
-
+        transaction["participants"][participant]["try"] = (
+            OperationStatus.FAILED.value
+        )
+        persist_orders()
         raise TryPhaseError(
-            participant=participant,
-            message=extract_error_detail(response),
-            status_code=map_participant_status(
-                response.status_code
-            ),
+            participant,
+            extract_error_detail(response),
+            map_participant_error(response.status_code),
         )
 
-    participant_state["try"] = ParticipantOperationStatus.OK
+    transaction["participants"][participant]["try"] = (
+        OperationStatus.OK.value
+    )
+    persist_orders()
 
 
 async def execute_try_phase(
@@ -242,24 +241,22 @@ async def execute_try_phase(
     request: CreateOrderRequest,
     amount: float,
 ) -> None:
-    await execute_try_request(
-        client=client,
-        transaction_id=transaction_id,
-        participant="inventory",
-        url=f"{INVENTORY_SERVICE_URL}/tcc/try",
-        payload={
+    await try_participant(
+        client,
+        transaction_id,
+        "inventory",
+        {
             "transaction_id": transaction_id,
             "product_id": request.product_id,
             "quantity": request.quantity,
         },
     )
 
-    await execute_try_request(
-        client=client,
-        transaction_id=transaction_id,
-        participant="payment",
-        url=f"{PAYMENT_SERVICE_URL}/tcc/try",
-        payload={
+    await try_participant(
+        client,
+        transaction_id,
+        "payment",
+        {
             "transaction_id": transaction_id,
             "username": username,
             "amount": amount,
@@ -267,12 +264,11 @@ async def execute_try_phase(
         },
     )
 
-    await execute_try_request(
-        client=client,
-        transaction_id=transaction_id,
-        participant="shipping",
-        url=f"{SHIPPING_SERVICE_URL}/tcc/try",
-        payload={
+    await try_participant(
+        client,
+        transaction_id,
+        "shipping",
+        {
             "transaction_id": transaction_id,
             "username": username,
             "address": request.address,
@@ -281,39 +277,57 @@ async def execute_try_phase(
     )
 
 
-async def cancel_participant(
+async def send_with_retry(
     client: httpx.AsyncClient,
-    participant: str,
     transaction_id: str,
+    participant: str,
+    operation: str,
 ) -> bool:
     transaction = orders[transaction_id]
-    participant_state = transaction["participants"][participant]
 
-    try:
-        response = await client.put(
-            f"{PARTICIPANT_URLS[participant]}/tcc/cancel",
-            json={"transaction_id": transaction_id},
-        )
-        response.raise_for_status()
-
-        participant_state["cancel"] = ParticipantOperationStatus.OK
-        transaction["cancel_errors"].pop(participant, None)
-
+    if (
+        transaction["participants"][participant][operation]
+        == OperationStatus.OK.value
+    ):
         return True
 
-    except httpx.HTTPStatusError as error:
-        participant_state["cancel"] = ParticipantOperationStatus.FAILED
-        transaction["cancel_errors"][participant] = (
-            extract_error_detail(error.response)
+    last_error = None
+
+    for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
+        try:
+            response = await client.put(
+                f"{PARTICIPANT_URLS[participant]}/tcc/{operation}",
+                json={"transaction_id": transaction_id},
+            )
+            response.raise_for_status()
+
+            transaction["participants"][participant][operation] = (
+                OperationStatus.OK.value
+            )
+            transaction["last_error"] = None
+            persist_orders()
+            return True
+
+        except httpx.HTTPStatusError as error:
+            last_error = extract_error_detail(error.response)
+        except httpx.RequestError as error:
+            last_error = str(error)
+
+        transaction["participants"][participant][operation] = (
+            OperationStatus.FAILED.value
         )
+        transaction["last_error"] = {
+            "participant": participant,
+            "operation": operation,
+            "attempt": attempt,
+            "message": last_error,
+        }
+        persist_orders()
 
-        return False
+        if attempt < MAX_RETRY_ATTEMPTS:
+            await asyncio.sleep(RETRY_DELAY_SECONDS)
 
-    except httpx.RequestError as error:
-        participant_state["cancel"] = ParticipantOperationStatus.ERROR
-        transaction["cancel_errors"][participant] = str(error)
-
-        return False
+    return False
 
 
 async def execute_cancel_phase(
@@ -321,94 +335,29 @@ async def execute_cancel_phase(
     transaction_id: str,
 ) -> bool:
     transaction = orders[transaction_id]
+    transaction["decision"] = TransactionDecision.ROLLBACK.value
+    transaction["status"] = TransactionStatus.CANCELLING.value
+    persist_orders()
 
-    transaction["decision"] = TransactionDecision.ROLLBACK
-    transaction["status"] = TransactionStatus.CANCELLING
+    all_cancelled = True
 
+    # Il Cancel viene inviato a tutti. I participant supportano l'empty-cancel.
     for participant in ("shipping", "payment", "inventory"):
-        participant_state = transaction["participants"][participant]
-
-        if participant_state["try"] != ParticipantOperationStatus.OK:
-            participant_state["cancel"] = (
-                ParticipantOperationStatus.NOT_REQUIRED
-            )
-            continue
-
-        await cancel_participant(
-            client=client,
-            participant=participant,
-            transaction_id=transaction_id,
+        cancelled = await send_with_retry(
+            client,
+            transaction_id,
+            participant,
+            "cancel",
         )
+        all_cancelled = all_cancelled and cancelled
 
-    has_failed_cancel = any(
-        participant_state["cancel"]
-        in {
-            ParticipantOperationStatus.FAILED,
-            ParticipantOperationStatus.ERROR,
-        }
-        for participant_state
-        in transaction["participants"].values()
+    transaction["status"] = (
+        TransactionStatus.CANCELLED.value
+        if all_cancelled
+        else TransactionStatus.CANCEL_PENDING.value
     )
-
-    if has_failed_cancel:
-        transaction["status"] = TransactionStatus.CANCEL_FAILED
-        return False
-
-    transaction["status"] = TransactionStatus.CANCELLED
-    return True
-
-
-async def confirm_participant_with_retry(
-    client: httpx.AsyncClient,
-    participant: str,
-    transaction_id: str,
-) -> bool:
-    transaction = orders[transaction_id]
-    participant_state = transaction["participants"][participant]
-
-    if participant_state["confirm"] == ParticipantOperationStatus.OK:
-        return True
-
-    for attempt in range(1, CONFIRM_MAX_ATTEMPTS + 1):
-        try:
-            response = await client.put(
-                f"{PARTICIPANT_URLS[participant]}/tcc/confirm",
-                json={"transaction_id": transaction_id},
-            )
-            response.raise_for_status()
-
-            participant_state["confirm"] = ParticipantOperationStatus.OK
-            transaction["confirm_errors"].pop(participant, None)
-
-            return True
-
-        except httpx.HTTPStatusError as error:
-            participant_state["confirm"] = (
-                ParticipantOperationStatus.RETRYING
-            )
-            transaction["confirm_errors"][participant] = {
-                "attempt": attempt,
-                "message": extract_error_detail(
-                    error.response
-                ),
-            }
-
-        except httpx.RequestError as error:
-            participant_state["confirm"] = (
-                ParticipantOperationStatus.RETRYING
-            )
-            transaction["confirm_errors"][participant] = {
-                "attempt": attempt,
-                "message": str(error),
-            }
-
-        if attempt < CONFIRM_MAX_ATTEMPTS:
-            await asyncio.sleep(
-                CONFIRM_RETRY_DELAY_SECONDS
-            )
-
-    participant_state["confirm"] = ParticipantOperationStatus.PENDING
-    return False
+    persist_orders()
+    return all_cancelled
 
 
 async def execute_confirm_phase(
@@ -417,28 +366,84 @@ async def execute_confirm_phase(
 ) -> bool:
     transaction = orders[transaction_id]
 
-    transaction["decision"] = TransactionDecision.COMMIT
-    transaction["status"] = TransactionStatus.CONFIRMING
+    # La decisione COMMIT viene salvata prima di inviare i Confirm.
+    transaction["decision"] = TransactionDecision.COMMIT.value
+    transaction["status"] = TransactionStatus.CONFIRMING.value
+    persist_orders()
 
-    for participant in (
-        "inventory",
-        "payment",
-        "shipping",
-    ):
-        confirmed = await confirm_participant_with_retry(
-            client=client,
-            participant=participant,
-            transaction_id=transaction_id,
+    for participant in ("inventory", "payment", "shipping"):
+        confirmed = await send_with_retry(
+            client,
+            transaction_id,
+            participant,
+            "confirm",
         )
 
         if not confirmed:
-            transaction["status"] = (
-                TransactionStatus.CONFIRM_PENDING
-            )
+            transaction["status"] = TransactionStatus.CONFIRM_PENDING.value
+            persist_orders()
             return False
 
-    transaction["status"] = TransactionStatus.CONFIRMED
+    transaction["status"] = TransactionStatus.CONFIRMED.value
+    persist_orders()
     return True
+
+
+async def recover_transaction(transaction_id: str) -> bool:
+    transaction = orders.get(transaction_id)
+
+    if transaction is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ordine non trovato",
+        )
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        if transaction["decision"] == TransactionDecision.COMMIT.value:
+            return await execute_confirm_phase(client, transaction_id)
+
+        if transaction["decision"] == TransactionDecision.ROLLBACK.value:
+            return await execute_cancel_phase(client, transaction_id)
+
+        # Una transazione rimasta TRYING non ha ancora deciso COMMIT:
+        # per sicurezza viene portata a ROLLBACK.
+        return await execute_cancel_phase(client, transaction_id)
+
+
+async def recover_pending_transactions() -> None:
+    pending_statuses = {
+        TransactionStatus.TRYING.value,
+        TransactionStatus.CANCELLING.value,
+        TransactionStatus.CANCEL_PENDING.value,
+        TransactionStatus.CONFIRMING.value,
+        TransactionStatus.CONFIRM_PENDING.value,
+    }
+
+    for transaction_id, transaction in list(orders.items()):
+        if transaction["status"] not in pending_statuses:
+            continue
+
+        try:
+            await recover_transaction(transaction_id)
+        except Exception as error:
+            transaction["last_error"] = {
+                "operation": "recovery",
+                "message": str(error),
+            }
+            persist_orders()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    load_orders()
+    await recover_pending_transactions()
+    yield
+
+
+app = FastAPI(
+    title="Order Service",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
@@ -467,6 +472,20 @@ def get_order(transaction_id: str):
     return order
 
 
+@app.post("/orders/{transaction_id}/recover")
+async def recover_order(transaction_id: str):
+    completed = await recover_transaction(transaction_id)
+    transaction = orders[transaction_id]
+
+    return {
+        "transaction_id": transaction_id,
+        "completed": completed,
+        "status": transaction["status"],
+        "decision": transaction["decision"],
+        "participants": transaction["participants"],
+    }
+
+
 @app.post("/orders")
 async def create_order(
     request: CreateOrderRequest,
@@ -476,7 +495,6 @@ async def create_order(
     ),
 ):
     user = verify_token(authorization)
-
     username = user.get("sub")
 
     if not username:
@@ -491,108 +509,79 @@ async def create_order(
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
             product_response = await client.get(
-                f"{INVENTORY_SERVICE_URL}/products/"
-                f"{request.product_id}"
+                f"{INVENTORY_SERVICE_URL}/products/{request.product_id}"
             )
             product_response.raise_for_status()
-
         except httpx.HTTPStatusError as error:
             raise HTTPException(
-                status_code=map_participant_status(
+                status_code=map_participant_error(
                     error.response.status_code
                 ),
-                detail={
-                    "message": "Impossibile recuperare il prodotto",
-                    "error": extract_error_detail(
-                        error.response
-                    ),
-                },
+                detail=extract_error_detail(error.response),
             ) from error
-
         except httpx.RequestError as error:
             raise HTTPException(
                 status_code=503,
-                detail={
-                    "message": (
-                        "Inventory service non raggiungibile"
-                    ),
-                    "error": str(error),
-                },
+                detail=f"Inventory non raggiungibile: {error}",
             ) from error
 
         product = product_response.json()
         amount = product["price"] * request.quantity
 
-        orders[transaction_id] = create_transaction(
-            transaction_id=transaction_id,
-            username=username,
-            request=request,
-            unit_price=product["price"],
-            amount=amount,
+        orders[transaction_id] = new_transaction(
+            transaction_id,
+            username,
+            request,
+            product["price"],
+            amount,
         )
+        persist_orders()
 
         try:
             await execute_try_phase(
-                client=client,
-                transaction_id=transaction_id,
-                username=username,
-                request=request,
-                amount=amount,
+                client,
+                transaction_id,
+                username,
+                request,
+                amount,
             )
-
         except TryPhaseError as error:
             transaction = orders[transaction_id]
-
-            transaction["error"] = {
+            transaction["last_error"] = {
                 "phase": "TRY",
                 "participant": error.participant,
                 "message": error.message,
             }
+            persist_orders()
 
             rollback_completed = await execute_cancel_phase(
-                client=client,
-                transaction_id=transaction_id,
+                client,
+                transaction_id,
             )
 
-            if not rollback_completed:
-                raise HTTPException(
-                    status_code=503,
-                    detail={
-                        "message": (
-                            "Il Try è fallito e il rollback "
-                            "non è stato completato"
-                        ),
-                        "transaction_id": transaction_id,
-                        "status": transaction["status"],
-                        "decision": transaction["decision"],
-                        "participants": (
-                            transaction["participants"]
-                        ),
-                        "cancel_errors": (
-                            transaction["cancel_errors"]
-                        ),
-                    },
-                ) from error
-
             raise HTTPException(
-                status_code=error.status_code,
+                status_code=(
+                    error.status_code
+                    if rollback_completed
+                    else 503
+                ),
                 detail={
                     "message": (
-                        "Ordine annullato durante la fase Try"
+                        "Ordine annullato durante il Try"
+                        if rollback_completed
+                        else "Rollback non ancora completato"
                     ),
                     "transaction_id": transaction_id,
-                    "failed_participant": error.participant,
-                    "error": error.message,
                     "status": transaction["status"],
                     "decision": transaction["decision"],
+                    "failed_participant": error.participant,
                 },
             ) from error
 
         confirmed = await execute_confirm_phase(
-            client=client,
-            transaction_id=transaction_id,
+            client,
+            transaction_id,
         )
-
         transaction = orders[transaction_id]
 
         if not confirmed:
@@ -601,7 +590,6 @@ async def create_order(
                 "transaction_id": transaction_id,
                 "decision": transaction["decision"],
                 "participants": transaction["participants"],
-                "confirm_errors": transaction["confirm_errors"],
             }
 
         return {
