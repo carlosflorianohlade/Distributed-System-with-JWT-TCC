@@ -304,7 +304,6 @@ async def send_with_retry(
             transaction["participants"][participant][operation] = (
                 OperationStatus.OK.value
             )
-            transaction["last_error"] = None
             persist_orders()
             return True
 
@@ -351,11 +350,12 @@ async def execute_cancel_phase(
         )
         all_cancelled = all_cancelled and cancelled
 
-    transaction["status"] = (
-        TransactionStatus.CANCELLED.value
-        if all_cancelled
-        else TransactionStatus.CANCEL_PENDING.value
-    )
+    if all_cancelled:
+        transaction["status"] = TransactionStatus.CANCELLED.value
+        transaction["last_error"] = None
+    else:
+        transaction["status"] = TransactionStatus.CANCEL_PENDING.value
+    
     persist_orders()
     return all_cancelled
 
@@ -385,6 +385,7 @@ async def execute_confirm_phase(
             return False
 
     transaction["status"] = TransactionStatus.CONFIRMED.value
+    transaction["last_error"] = None
     persist_orders()
     return True
 
