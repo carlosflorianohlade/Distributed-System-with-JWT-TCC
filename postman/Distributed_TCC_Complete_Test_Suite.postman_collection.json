@@ -1,0 +1,1514 @@
+{
+  "info": {
+    "name": "Distributed TCC - Complete Test Suite",
+    "_postman_id": "c9f6b95e-1be4-4dc0-9a71-4b62586c5d01",
+    "description": "Suite completa per testare auth-service, order-service e i tre participant TCC. Include successo, rollback, idempotenza, empty-cancel, conflitti e recovery manuale.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "authBaseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "orderBaseUrl",
+      "value": "http://localhost:8001"
+    },
+    {
+      "key": "inventoryBaseUrl",
+      "value": "http://localhost:8002"
+    },
+    {
+      "key": "paymentBaseUrl",
+      "value": "http://localhost:8003"
+    },
+    {
+      "key": "shippingBaseUrl",
+      "value": "http://localhost:8004"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "lastOrderId",
+      "value": ""
+    },
+    {
+      "key": "inventoryTx",
+      "value": "pm-inventory-001"
+    },
+    {
+      "key": "paymentTx",
+      "value": "pm-payment-001"
+    },
+    {
+      "key": "shippingTx",
+      "value": "pm-shipping-001"
+    },
+    {
+      "key": "recoveryTx",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Health",
+      "item": [
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{authBaseUrl}}/health",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Service is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Auth health"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{orderBaseUrl}}/health",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Service is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Order health"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/health",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Service is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory health"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/health",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Service is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment health"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/health",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Service is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping health"
+        }
+      ]
+    },
+    {
+      "name": "01 - Auth",
+      "item": [
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"carlos\",\n  \"password\": \"admin\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Token present\", () => pm.expect(body.access_token).to.be.a(\"string\").and.not.empty);",
+                  "pm.collectionVariables.set(\"token\", body.access_token);"
+                ]
+              }
+            }
+          ],
+          "name": "Login corretto - salva token"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"carlos\",\n  \"password\": \"wrong\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login errato -> 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "name": "Login password errata"
+        }
+      ]
+    },
+    {
+      "name": "02 - Orders",
+      "item": [
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\"\n}"
+            }
+          },
+          "name": "Ordine senza token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Missing token -> 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\",\n  \"fail_payment\": false,\n  \"fail_shipping\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Order success 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Decision COMMIT\", () => pm.expect(body.decision).to.eql(\"COMMIT\"));",
+                  "pm.test(\"Order confirmed\", () => pm.expect(body.status).to.eql(\"ORDER_CONFIRMED\"));",
+                  "pm.test(\"All confirms OK\", () => {",
+                  "  [\"inventory\",\"payment\",\"shipping\"].forEach(p => {",
+                  "    pm.expect(body.participants[p].try).to.eql(\"OK\");",
+                  "    pm.expect(body.participants[p].confirm).to.eql(\"OK\");",
+                  "  });",
+                  "});",
+                  "pm.collectionVariables.set(\"lastOrderId\", body.transaction_id);"
+                ]
+              }
+            }
+          ],
+          "name": "Ordine riuscito - COMMIT"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\",\n  \"fail_payment\": true,\n  \"fail_shipping\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Payment failure returns error\", () => pm.expect(pm.response.code).to.be.oneOf([409,500,503]));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Rollback decision\", () => pm.expect(body.detail.decision).to.eql(\"ROLLBACK\"));",
+                  "pm.test(\"Final status cancelled or pending\", () => pm.expect(body.detail.status).to.be.oneOf([\"CANCELLED\",\"CANCEL_PENDING\"]));",
+                  "pm.collectionVariables.set(\"lastOrderId\", body.detail.transaction_id);"
+                ]
+              }
+            }
+          ],
+          "name": "Ordine con errore payment - ROLLBACK"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\",\n  \"fail_payment\": false,\n  \"fail_shipping\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Shipping failure returns error\", () => pm.expect(pm.response.code).to.be.oneOf([409,500,503]));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Rollback decision\", () => pm.expect(body.detail.decision).to.eql(\"ROLLBACK\"));",
+                  "pm.test(\"Final status cancelled or pending\", () => pm.expect(body.detail.status).to.be.oneOf([\"CANCELLED\",\"CANCEL_PENDING\"]));",
+                  "pm.collectionVariables.set(\"lastOrderId\", body.detail.transaction_id);"
+                ]
+              }
+            }
+          ],
+          "name": "Ordine con errore shipping - ROLLBACK"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"missing\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Missing product -> 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "name": "Ordine con prodotto inesistente"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 0,\n  \"address\": \"Via Roma 1\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Invalid quantity -> 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "name": "Ordine con quantit\u00e0 non valida"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders/{{lastOrderId}}",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{lastOrderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Order found\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Status exists\", () => pm.expect(body.status).to.be.a(\"string\"));",
+                  "pm.test(\"Decision exists\", () => pm.expect(body.decision).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Leggi ultimo ordine"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Orders list 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Leggi tutti gli ordini"
+        }
+      ]
+    },
+    {
+      "name": "03 - Inventory direct",
+      "item": [
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/tcc/try",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{inventoryTx}}\",\n  \"product_id\": \"p1\",\n  \"quantity\": 2\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Inventory try 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Reserved or already processed\", () => pm.expect(body.status).to.be.oneOf([\"RESERVED\",\"ALREADY_PROCESSED\"]));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory Try"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/tcc/try",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{inventoryTx}}\",\n  \"product_id\": \"p1\",\n  \"quantity\": 2\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Inventory retry 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Idempotent\", () => pm.expect(pm.response.json().status).to.eql(\"ALREADY_PROCESSED\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory Try identico - idempotenza"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/tcc/try",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{inventoryTx}}\",\n  \"product_id\": \"p1\",\n  \"quantity\": 3\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Different payload -> 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory stesso ID, payload diverso"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{inventoryTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Confirm 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Confirmed\", () => pm.expect(pm.response.json().status).to.be.oneOf([\"CONFIRMED\",\"ALREADY_CONFIRMED\"]));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory Confirm"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{inventoryTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Second confirm 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Already confirmed\", () => pm.expect(pm.response.json().status).to.eql(\"ALREADY_CONFIRMED\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory secondo Confirm"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/tcc/cancel",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{inventoryTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Cancel after confirm -> 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory Cancel dopo Confirm"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/tcc/cancel",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"inventory-never-created\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Empty cancel 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Empty cancel true\", () => pm.expect(body.empty_cancel).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory Empty Cancel"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/state",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "state"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Inventory state 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Inventory State"
+        }
+      ]
+    },
+    {
+      "name": "04 - Payment direct",
+      "item": [
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/try",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{paymentTx}}\",\n  \"username\": \"carlos\",\n  \"amount\": 100.0,\n  \"fail\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Payment try 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Reserved\", () => pm.expect(pm.response.json().status).to.be.oneOf([\"RESERVED\",\"ALREADY_PROCESSED\"]));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment Try"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/try",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{paymentTx}}\",\n  \"username\": \"carlos\",\n  \"amount\": 100.0,\n  \"fail\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Payment retry 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Idempotent\", () => pm.expect(pm.response.json().status).to.eql(\"ALREADY_PROCESSED\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment Try identico"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/try",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{paymentTx}}\",\n  \"username\": \"carlos\",\n  \"amount\": 200.0,\n  \"fail\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Different payload -> 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment stesso ID, payload diverso"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{paymentTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Payment confirm 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment Confirm"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{paymentTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Second payment confirm 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Already confirmed\", () => pm.expect(pm.response.json().status).to.eql(\"ALREADY_CONFIRMED\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment secondo Confirm"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/cancel",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"payment-never-created\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Payment empty cancel 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Empty cancel true\", () => pm.expect(pm.response.json().empty_cancel).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment Empty Cancel"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/state",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "state"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Payment state 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Payment State"
+        }
+      ]
+    },
+    {
+      "name": "05 - Shipping direct",
+      "item": [
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/tcc/try",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{shippingTx}}\",\n  \"username\": \"carlos\",\n  \"address\": \"Via Test 10\",\n  \"fail\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Shipping try 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping Try"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/tcc/try",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{shippingTx}}\",\n  \"username\": \"carlos\",\n  \"address\": \"Via Test 10\",\n  \"fail\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Shipping retry 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Idempotent\", () => pm.expect(pm.response.json().status).to.eql(\"ALREADY_PROCESSED\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping Try identico"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/tcc/try",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{shippingTx}}\",\n  \"username\": \"carlos\",\n  \"address\": \"Via Diversa 99\",\n  \"fail\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Different payload -> 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping stesso ID, payload diverso"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{shippingTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Shipping confirm 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping Confirm"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{shippingTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Second shipping confirm 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Already confirmed\", () => pm.expect(pm.response.json().status).to.eql(\"ALREADY_CONFIRMED\"));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping secondo Confirm"
+        },
+        {
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/tcc/cancel",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"shipping-never-created\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Shipping empty cancel 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Empty cancel true\", () => pm.expect(pm.response.json().empty_cancel).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping Empty Cancel"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/state",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "state"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Shipping state 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Shipping State"
+        }
+      ]
+    },
+    {
+      "name": "06 - Recovery manuale",
+      "description": "Prima crea manualmente una transazione pending fermando un participant Docker. Inserisci il transaction_id in recoveryTx.",
+      "item": [
+        {
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders/{{recoveryTx}}",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{recoveryTx}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Recovery transaction exists\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "name": "Controlla transazione recovery"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders/{{recoveryTx}}/recover",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{recoveryTx}}",
+                "recover"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Recovery endpoint 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Recovery completed\", () => pm.expect(body.completed).to.eql(true));",
+                  "pm.test(\"Final status\", () => pm.expect(body.status).to.be.oneOf([\"CANCELLED\",\"CONFIRMED\"]));"
+                ]
+              }
+            }
+          ],
+          "name": "Esegui recovery manuale"
+        }
+      ]
+    }
+  ]
+}
