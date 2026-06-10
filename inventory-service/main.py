@@ -1,11 +1,14 @@
 from enum import Enum
-
+import time
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 
 app = FastAPI(title="Inventory Service")
 
+TTL_SECONDS = int(os.getenv("TTL_SECONDS", "30"))
+BOOL_EXPIRED = True
 
 class ReservationState(str, Enum):
     RESERVED = "RESERVED"
@@ -46,6 +49,18 @@ products = {
 
 reservations: dict[str, dict] = {}
 
+def expire_reservation_if_needed(transaction_id: str) -> None:
+    reservation = reservations.get(transaction_id)
+
+    if (
+        reservation is not None
+        and reservation["state"] == ReservationState.RESERVED
+        and time.time() >= reservation["expires_at"]
+    ):
+        product = products[reservation["product_id"]]
+        product["reserved"] -= reservation["quantity"]
+        reservation["state"] = ReservationState.CANCELLED
+        reservation["expired"] = BOOL_EXPIRED
 
 @app.get("/health")
 def health_check():
@@ -87,6 +102,7 @@ def get_state():
 
 @app.post("/tcc/try")
 def try_inventory(request: InventoryTryRequest):
+    expire_reservation_if_needed(request.transaction_id)
     existing = reservations.get(request.transaction_id)
 
     if existing is not None:
@@ -133,6 +149,7 @@ def try_inventory(request: InventoryTryRequest):
         "product_id": request.product_id,
         "quantity": request.quantity,
         "state": ReservationState.RESERVED,
+        "expires_at": time.time() + TTL_SECONDS,
     }
 
     return {
@@ -144,6 +161,7 @@ def try_inventory(request: InventoryTryRequest):
 
 @app.put("/tcc/confirm")
 def confirm_inventory(request: TransactionRequest):
+    expire_reservation_if_needed(request.transaction_id)
     reservation = reservations.get(request.transaction_id)
 
     if reservation is None:
@@ -160,6 +178,12 @@ def confirm_inventory(request: TransactionRequest):
         }
 
     if reservation["state"] == ReservationState.CANCELLED:
+        if reservation.get("expired"):
+            raise HTTPException(
+                status_code=409,
+                detail="Prenotazione scaduta"
+            )
+        
         raise HTTPException(
             status_code=409,
             detail="Prenotazione già cancellata",
@@ -181,6 +205,7 @@ def confirm_inventory(request: TransactionRequest):
 
 @app.put("/tcc/cancel")
 def cancel_inventory(request: TransactionRequest):
+    expire_reservation_if_needed(request.transaction_id)
     reservation = reservations.get(request.transaction_id)
 
     if reservation is None:

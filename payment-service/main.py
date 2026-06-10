@@ -1,4 +1,6 @@
 from enum import Enum
+import time
+import os
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -6,6 +8,8 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="Payment Service")
 
+TTL_SECONDS = int(os.getenv("TTL_SECONDS", "30"))
+BOOL_EXPIRED = True
 
 class PaymentState(str, Enum):
     RESERVED = "RESERVED"
@@ -37,6 +41,18 @@ accounts = {
 
 payments: dict[str, dict] = {}
 
+def expire_payment_if_needed(transaction_id: str) -> None:
+    payment = payments.get(transaction_id)
+
+    if (
+        payment is not None
+        and payment["state"] == PaymentState.RESERVED
+        and time.time() >= payment["expires_at"]
+    ):
+        account = accounts[payment["username"]]
+        account["blocked"] -= payment["amount"]
+        payment["state"] = PaymentState.CANCELLED
+        payment["expired"] = BOOL_EXPIRED
 
 @app.get("/health")
 def health_check():
@@ -56,6 +72,7 @@ def get_state():
 
 @app.post("/tcc/try")
 def try_payment(request: PaymentTryRequest):
+    expire_payment_if_needed(request.transaction_id)
     if request.fail:
         raise HTTPException(
             status_code=500,
@@ -108,6 +125,7 @@ def try_payment(request: PaymentTryRequest):
         "username": request.username,
         "amount": request.amount,
         "state": PaymentState.RESERVED,
+        "expires_at": time.time() + TTL_SECONDS
     }
 
     return {
@@ -119,6 +137,7 @@ def try_payment(request: PaymentTryRequest):
 
 @app.put("/tcc/confirm")
 def confirm_payment(request: TransactionRequest):
+    expire_payment_if_needed(request.transaction_id)
     payment = payments.get(request.transaction_id)
 
     if payment is None:
@@ -135,6 +154,11 @@ def confirm_payment(request: TransactionRequest):
         }
 
     if payment["state"] == PaymentState.CANCELLED:
+        if payment.get("expired"):
+            raise HTTPException(
+                status_code=409,
+                detail="Prenotazione scaduta"
+            )
         raise HTTPException(
             status_code=409,
             detail="Pagamento già annullato",
@@ -156,6 +180,7 @@ def confirm_payment(request: TransactionRequest):
 
 @app.put("/tcc/cancel")
 def cancel_payment(request: TransactionRequest):
+    expire_payment_if_needed(request.transaction_id)
     payment = payments.get(request.transaction_id)
 
     if payment is None:
