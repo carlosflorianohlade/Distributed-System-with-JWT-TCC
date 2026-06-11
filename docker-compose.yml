@@ -33,7 +33,7 @@ services:
     ports:
       - "8002:8000"
     environment:
-      - TTL_SECONDS=10
+      - TTL_SECONDS=60
 
   payment-service:
     build: ./payment-service
@@ -41,7 +41,7 @@ services:
     ports:
       - "8003:8000"
     environment:
-      - TTL_SECONDS=10
+      - TTL_SECONDS=60
 
   shipping-service:
     build: ./shipping-service
@@ -49,7 +49,7 @@ services:
     ports:
       - "8004:8000"
     environment:
-      - TTL_SECONDS=10
+      - TTL_SECONDS=60
 
 volumes:
   order-data:

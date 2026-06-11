@@ -2,7 +2,7 @@
 
 A microservices-based distributed order management system built with **FastAPI**, **JWT authentication**, **Docker Compose**, and the **Try-Confirm/Cancel (TCC)** transaction pattern.
 
-The project demonstrates how a coordinator can manage a distributed business operation across independent services while handling partial failures, compensation, idempotent operations, persistent decisions, retries, and transaction recovery.
+The project demonstrates how a coordinator can manage a distributed business operation across independent services while handling partial failures, compensation, idempotent operations, persistent decisions, retries, transaction recovery, and time-bounded reservations through a configurable TTL.
 
 ---
 
@@ -16,6 +16,7 @@ The project demonstrates how a coordinator can manage a distributed business ope
 - [Transaction Decision and Status](#transaction-decision-and-status)
 - [Distributed Order Flow](#distributed-order-flow)
 - [Idempotency and Empty Cancel](#idempotency-and-empty-cancel)
+- [Reservation TTL and the τ Property](#reservation-ttl-and-the-τ-property)
 - [Persistence and Recovery](#persistence-and-recovery)
 - [Project Structure](#project-structure)
 - [Technologies](#technologies)
@@ -27,6 +28,7 @@ The project demonstrates how a coordinator can manage a distributed business ope
 - [Usage Examples](#usage-examples)
 - [State Inspection](#state-inspection)
 - [Testing with Postman](#testing-with-postman)
+- [TTL Test](#ttl-test)
 - [Manual Recovery Test](#manual-recovery-test)
 - [Failure Scenarios](#failure-scenarios)
 - [Limitations](#limitations)
@@ -65,6 +67,7 @@ The project demonstrates the following distributed systems concepts:
 - compensation through Cancel operations;
 - idempotent participant operations;
 - empty-cancel handling;
+- time-bounded reservations through a configurable TTL;
 - persistent coordinator decisions;
 - retry mechanisms;
 - recovery of incomplete transactions;
@@ -156,6 +159,14 @@ In this project:
 A successful Try means:
 
 > The participant guarantees that the resource is reserved and can later be either confirmed or cancelled.
+
+Each reservation also receives an expiration timestamp:
+
+```python
+expires_at = time.time() + TTL_SECONDS
+```
+
+The reservation therefore remains valid only for a bounded interval `τ`, represented in the implementation by `TTL_SECONDS`.
 
 ### Confirm
 
@@ -415,6 +426,164 @@ This allows the coordinator to safely send Cancel to every participant during ro
 
 ---
 
+
+## Reservation TTL and the τ Property
+
+A successful TCC Try creates a provisional reservation. Without an expiration policy, a coordinator crash or a permanently lost second-phase request could leave inventory, funds, or shipping capacity reserved indefinitely.
+
+To prevent abandoned reservations from remaining blocked forever, every participant implements a configurable **Time To Live (TTL)**. The TTL represents the temporal bound commonly denoted by `τ`.
+
+### Reservation creation
+
+When a participant successfully processes Try, it stores:
+
+```python
+"expires_at": time.time() + TTL_SECONDS
+```
+
+The current Docker Compose configuration passes the same value to the three participants:
+
+```yaml
+inventory-service:
+  environment:
+    - TTL_SECONDS=10
+
+payment-service:
+  environment:
+    - TTL_SECONDS=10
+
+shipping-service:
+  environment:
+    - TTL_SECONDS=10
+```
+
+The value `10` seconds is useful for demonstrations and fast tests. For normal execution, a larger value such as `60` seconds is recommended.
+
+### Lazy expiration strategy
+
+The project implements expiration with an **inline lazy check**, rather than a background scheduler.
+
+Each participant calls its expiration function at the beginning of:
+
+```text
+POST /tcc/try
+PUT  /tcc/confirm
+PUT  /tcc/cancel
+```
+
+The check is performed only for the `transaction_id` received by the current request.
+
+This means that a reservation is released when a later TCC request for the same transaction reaches the participant. The project does not run a periodic background task that scans all reservations.
+
+### Inventory expiration
+
+If an inventory reservation is still `RESERVED` after `expires_at`:
+
+```text
+reserved decreases
+stock remains unchanged
+state becomes CANCELLED
+expired becomes true
+```
+
+The product quantity is released because it was never committed.
+
+### Payment expiration
+
+If a payment reservation is still `RESERVED` after `expires_at`:
+
+```text
+blocked decreases
+balance remains unchanged
+state becomes CANCELLED
+expired becomes true
+```
+
+The blocked funds are released without charging the account.
+
+### Shipping expiration
+
+If a shipment is still `RESERVED` after `expires_at`:
+
+```text
+state becomes CANCELLED
+expired becomes true
+```
+
+The shipment can no longer be confirmed.
+
+### Confirm after expiration
+
+When Confirm reaches an expired reservation, the participant first applies the expiration rule and then rejects Confirm with:
+
+```text
+409 Conflict
+```
+
+The local record is retained with:
+
+```json
+{
+  "state": "CANCELLED",
+  "expired": true
+}
+```
+
+The record is not deleted. Keeping the tombstone-like state preserves idempotency and prevents the same transaction identifier from creating a new reservation after expiration.
+
+### TTL and a persisted COMMIT decision
+
+The TTL must be configured carefully.
+
+The coordinator persists `COMMIT` before sending Confirm. After that decision, the transaction must converge toward Confirm and must not be rolled back.
+
+A TTL that is too short may create this scenario:
+
+```text
+1. Every Try succeeds.
+2. The coordinator persists COMMIT.
+3. A participant becomes temporarily unreachable.
+4. The participant reservation reaches its TTL.
+5. Confirm is retried after the participant becomes reachable.
+6. The participant expires the reservation and rejects Confirm.
+```
+
+For this reason, the configured TTL should be longer than the maximum expected time required by the coordinator to execute retries and recovery.
+
+With the current order-service configuration:
+
+```text
+HTTP timeout          = 5 seconds
+MAX_RETRY_ATTEMPTS    = 5
+RETRY_DELAY_SECONDS   = 1 second
+```
+
+a participant failure can keep one second-phase operation active for approximately 29 seconds in the worst case. Therefore:
+
+```text
+TTL_SECONDS=10
+```
+
+should be treated as a test value, while:
+
+```text
+TTL_SECONDS=60
+```
+
+is a safer value for normal demonstrations.
+
+A production implementation would normally add persistent participant state, renewable leases, and a reconciliation mechanism between the coordinator decision and expired reservations.
+
+### Anti-hanging scope
+
+The TTL prevents an existing `RESERVED` entry from remaining blocked indefinitely and prevents an expired transaction identifier from being reused.
+
+The current empty-cancel implementation does not create a cancellation tombstone when Cancel arrives for a completely unknown transaction. Therefore, a severely delayed Try that arrives after an earlier empty-cancel is not explicitly rejected.
+
+This is a known simplification of the didactic implementation. A complete anti-hanging solution would persist a cancelled marker even for an empty-cancel transaction identifier.
+
+---
+
 ## Persistence and Recovery
 
 The coordinator stores its transaction log in:
@@ -564,8 +733,11 @@ The main Docker Compose environment variables are:
 | `MAX_RETRY_ATTEMPTS` | order | Number of Confirm/Cancel attempts |
 | `RETRY_DELAY_SECONDS` | order | Delay between attempts |
 | `ORDERS_FILE` | order | Persistent transaction log location |
+| `TTL_SECONDS` | inventory, payment, shipping | Maximum lifetime of a `RESERVED` participant reservation |
 
 The Compose configuration provides development defaults.
+
+`TTL_SECONDS` is currently set to `10` for fast TTL demonstrations. For normal execution, use a value greater than the coordinator retry window, such as `60`.
 
 For a real deployment, secrets must not be stored in the repository or committed to version control.
 
@@ -912,6 +1084,15 @@ stock unchanged
 reserved decreased
 ```
 
+After TTL expiration:
+
+```text
+stock unchanged
+reserved decreased
+state = CANCELLED
+expired = true
+```
+
 ### Payment state
 
 An account contains:
@@ -942,6 +1123,15 @@ balance unchanged
 blocked decreased
 ```
 
+After TTL expiration:
+
+```text
+balance unchanged
+blocked decreased
+state = CANCELLED
+expired = true
+```
+
 ### Shipping state
 
 A shipment moves between:
@@ -951,6 +1141,8 @@ RESERVED
 CONFIRMED
 CANCELLED
 ```
+
+If the TTL expires while the shipment is `RESERVED`, the state becomes `CANCELLED` and the record receives `expired = true`.
 
 ---
 
@@ -1002,6 +1194,168 @@ The direct participant tests use fixed transaction IDs. Before repeating the ent
 
 - change the variables `inventoryTx`, `paymentTx`, and `shippingTx`;
 - or restart the participant containers to reset their in-memory state.
+
+---
+
+
+## TTL Test
+
+The current Compose value of `TTL_SECONDS=10` allows the expiration behavior to be tested quickly.
+
+### Inventory TTL
+
+Create a reservation:
+
+```http
+POST http://localhost:8002/tcc/try
+Content-Type: application/json
+```
+
+```json
+{
+  "transaction_id": "ttl-inventory-1",
+  "product_id": "p1",
+  "quantity": 2
+}
+```
+
+Immediately inspect:
+
+```http
+GET http://localhost:8002/state
+```
+
+Expected state:
+
+```text
+state = RESERVED
+reserved = 2
+expires_at = a future Unix timestamp
+expired = false
+```
+
+Wait more than 10 seconds, then send:
+
+```http
+PUT http://localhost:8002/tcc/confirm
+Content-Type: application/json
+```
+
+```json
+{
+  "transaction_id": "ttl-inventory-1"
+}
+```
+
+Expected result:
+
+```text
+409 Conflict
+```
+
+The state must now show:
+
+```text
+stock unchanged
+reserved = 0
+state = CANCELLED
+expired = true
+```
+
+### Payment TTL
+
+Create a reservation:
+
+```http
+POST http://localhost:8003/tcc/try
+Content-Type: application/json
+```
+
+```json
+{
+  "transaction_id": "ttl-payment-1",
+  "username": "carlos",
+  "amount": 100,
+  "fail": false
+}
+```
+
+Before expiration:
+
+```text
+balance unchanged
+blocked increased by 100
+state = RESERVED
+```
+
+After waiting more than the TTL, send Confirm for the same transaction.
+
+Expected result:
+
+```text
+409 Conflict
+balance unchanged
+blocked restored
+state = CANCELLED
+expired = true
+```
+
+### Shipping TTL
+
+Create a reservation:
+
+```http
+POST http://localhost:8004/tcc/try
+Content-Type: application/json
+```
+
+```json
+{
+  "transaction_id": "ttl-shipping-1",
+  "username": "carlos",
+  "address": "TTL Test Street 1",
+  "fail": false
+}
+```
+
+After waiting more than the TTL, send Confirm:
+
+```http
+PUT http://localhost:8004/tcc/confirm
+Content-Type: application/json
+```
+
+```json
+{
+  "transaction_id": "ttl-shipping-1"
+}
+```
+
+Expected result:
+
+```text
+409 Conflict
+state = CANCELLED
+expired = true
+```
+
+### Return to a normal TTL
+
+After the expiration tests, change the Compose configuration to:
+
+```yaml
+environment:
+  - TTL_SECONDS=60
+```
+
+Then recreate the participant containers:
+
+```bash
+docker compose up --build -d \
+  inventory-service \
+  payment-service \
+  shipping-service
+```
 
 ---
 
@@ -1098,6 +1452,7 @@ At startup, the coordinator loads the persistent log and retries the incomplete 
 | Cancel temporarily fails after rollback | `ROLLBACK` | `CANCEL_PENDING` |
 | Coordinator restarts during Try | `ROLLBACK` during recovery | `CANCELLED` or `CANCEL_PENDING` |
 | Coordinator restarts after commit | `COMMIT` remains unchanged | `CONFIRMED` or `CONFIRM_PENDING` |
+| Participant reservation expires before Confirm | Coordinator decision may still be `COMMIT` | Participant returns `409`; manual reconciliation is required |
 
 ---
 
@@ -1117,6 +1472,10 @@ The following limitations are intentional:
 - passwords are hard-coded and stored in plain text;
 - the development JWT secret has a Compose default;
 - retry uses a fixed delay rather than exponential backoff;
+- participant TTL expiration is lazy and runs only when another TCC request for the same transaction arrives;
+- the current `TTL_SECONDS=10` value is intended for testing and is shorter than the worst-case coordinator retry window;
+- a reservation may expire after a persisted `COMMIT`, requiring reconciliation;
+- empty-cancel does not persist a tombstone for completely unknown transaction identifiers, so full anti-hanging protection is not implemented;
 - the application does not include distributed tracing or metrics;
 - `GET /orders` and diagnostic state endpoints are not access-controlled.
 
@@ -1132,37 +1491,51 @@ A production implementation would persist participant state in databases.
 
 ## Possible Improvements
 
-Possible future improvements include:
+Future developments could focus on the following areas:
 
-- persistent databases for every participant;
-- transactional state updates;
-- optimistic or pessimistic concurrency control;
-- monetary amounts represented with `Decimal` or integer cents;
-- asymmetric JWT signing;
-- service-to-service authentication;
-- protected diagnostic endpoints;
-- exponential backoff with jitter;
-- background recovery worker;
-- reservation expiration and reconciliation;
-- structured logging;
-- correlation IDs;
-- OpenTelemetry distributed tracing;
-- Prometheus metrics;
-- automated integration tests;
-- health checks and readiness checks in Docker Compose;
-- dependency version locking;
-- CI/CD pipeline;
-- secret management outside the repository.
+### Reliability and Persistence
+
+* Persistent databases for every participant.
+* Transactional local state updates.
+* A background recovery worker for pending transactions.
+* Background expiration scanning for TTL reservations.
+* Complete anti-hanging protection through cancellation tombstones.
+
+### Concurrency and Data Consistency
+
+* Optimistic or pessimistic concurrency control.
+* Monetary amounts represented with `Decimal` or integer cents.
+
+### Security
+
+* Asymmetric JWT signing.
+* Service-to-service authentication.
+* Protected diagnostic and state inspection endpoints.
+
+### Observability and Testing
+
+* Structured logging and correlation IDs.
+* Automated unit and integration tests.
+* Docker health checks and readiness checks.
+
+### Build and Delivery
+
+* Dependency version locking.
+* A continuous integration and continuous delivery pipeline.
+
+
 
 ---
 
-## Educational Summary
+## Key Takeaways
 
-The core rule demonstrated by this project is:
-
-> A failure during Try allows the coordinator to decide ROLLBACK and execute Cancel.  
-> After the coordinator persists COMMIT, a later Confirm failure must be retried and must not be converted into rollback.
-
-The transaction decision indicates **where the distributed transaction must arrive**.
-
-The transaction status indicates **how far the coordinator has progressed toward that result**.
+* The Try phase reserves resources without applying the final business effect.
+* If every Try succeeds, the coordinator persists the `COMMIT` decision and executes Confirm on all participants.
+* If a Try fails, the coordinator persists `ROLLBACK` and executes Cancel to release temporary reservations.
+* After `COMMIT`, a failed Confirm must be retried and must not be converted into a rollback.
+* Try, Confirm, and Cancel are idempotent, allowing the coordinator to safely repeat requests after network failures.
+* Empty-cancel allows participants to accept Cancel even when no local reservation exists.
+* The coordinator persists transaction state and can recover incomplete Confirm or Cancel operations after a restart.
+* Participant reservations have a configurable TTL, which prevents provisional resources from remaining reserved indefinitely once expiration is detected.
+* `decision` represents the final outcome selected by the coordinator, while `status` represents the current progress toward that outcome.
+* The project is intentionally simplified for educational purposes: participant state is in memory, TTL expiration is lazy, and full anti-hanging protection is outside the current scope.
