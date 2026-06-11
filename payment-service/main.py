@@ -124,7 +124,8 @@ def try_payment(request: PaymentTryRequest):
         "username": request.username,
         "amount": request.amount,
         "state": PaymentState.RESERVED,
-        "expires_at": time.time() + TTL_SECONDS
+        "expires_at": time.time() + TTL_SECONDS,
+        "expired": False,
     }
 
     return {

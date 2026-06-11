@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="Shipping Service")
 
-TTL_SECOND = int(os.getenv("TTL_SECONDS", "30"))
+TTL_SECONDS = int(os.getenv("TTL_SECONDS", "30"))
 
 class ShipmentState(str, Enum):
     RESERVED = "RESERVED"
@@ -57,7 +57,7 @@ def get_state():
 
 @app.post("/tcc/try")
 def try_shipping(request: ShippingTryRequest):
-    expire_shipment_if_needed()
+    expire_shipment_if_needed(request.transaction_id)
     if request.fail:
         raise HTTPException(
             status_code=500,
@@ -92,7 +92,8 @@ def try_shipping(request: ShippingTryRequest):
         "username": request.username,
         "address": request.address,
         "state": ShipmentState.RESERVED,
-        "expires_at": time.time() + TTL_SECOND,
+        "expires_at": time.time() + TTL_SECONDS,
+        "expired": False,
     }
 
     return {
@@ -104,7 +105,7 @@ def try_shipping(request: ShippingTryRequest):
 
 @app.put("/tcc/confirm")
 def confirm_shipping(request: TransactionRequest):
-    expire_shipment_if_needed()
+    expire_shipment_if_needed(request.transaction_id)
     shipment = shipments.get(request.transaction_id)
 
     if shipment is None:
@@ -121,6 +122,11 @@ def confirm_shipping(request: TransactionRequest):
         }
 
     if shipment["state"] == ShipmentState.CANCELLED:
+        if shipment.get("expired"):
+            raise HTTPException(
+                status_code=409,
+                detail="Prenotazione scaduta"
+            )
         raise HTTPException(
             status_code=409,
             detail="Spedizione già annullata",
@@ -137,7 +143,7 @@ def confirm_shipping(request: TransactionRequest):
 
 @app.put("/tcc/cancel")
 def cancel_shipping(request: TransactionRequest):
-    expire_shipment_if_needed()
+    expire_shipment_if_needed(request.transaction_id)
     shipment = shipments.get(request.transaction_id)
 
     if shipment is None:

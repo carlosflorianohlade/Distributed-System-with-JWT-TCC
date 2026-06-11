@@ -149,6 +149,7 @@ def try_inventory(request: InventoryTryRequest):
         "quantity": request.quantity,
         "state": ReservationState.RESERVED,
         "expires_at": time.time() + TTL_SECONDS,
+        "expired": False,
     }
 
     return {
