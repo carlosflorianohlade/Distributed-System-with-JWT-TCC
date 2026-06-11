@@ -32,18 +32,24 @@ services:
     container_name: inventory-service
     ports:
       - "8002:8000"
+    environment:
+      - TTL_SECONDS=10
 
   payment-service:
     build: ./payment-service
     container_name: payment-service
     ports:
       - "8003:8000"
+    environment:
+      - TTL_SECONDS=10
 
   shipping-service:
     build: ./shipping-service
     container_name: shipping-service
     ports:
       - "8004:8000"
+    environment:
+      - TTL_SECONDS=10
 
 volumes:
   order-data:

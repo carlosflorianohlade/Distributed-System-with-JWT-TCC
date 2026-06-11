@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 app = FastAPI(title="Payment Service")
 
 TTL_SECONDS = int(os.getenv("TTL_SECONDS", "30"))
-BOOL_EXPIRED = True
 
 class PaymentState(str, Enum):
     RESERVED = "RESERVED"
@@ -52,7 +51,7 @@ def expire_payment_if_needed(transaction_id: str) -> None:
         account = accounts[payment["username"]]
         account["blocked"] -= payment["amount"]
         payment["state"] = PaymentState.CANCELLED
-        payment["expired"] = BOOL_EXPIRED
+        payment["expired"] = True
 
 @app.get("/health")
 def health_check():

@@ -1,4 +1,6 @@
 from enum import Enum
+import time
+import os
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -6,6 +8,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="Shipping Service")
 
+TTL_SECOND = int(os.getenv("TTL_SECONDS", "30"))
 
 class ShipmentState(str, Enum):
     RESERVED = "RESERVED"
@@ -26,6 +29,16 @@ class TransactionRequest(BaseModel):
 
 shipments: dict[str, dict] = {}
 
+def expire_shipment_if_needed(transaction_id: str) -> None:
+    shipment = shipments.get(transaction_id)
+
+    if (
+        shipment is not None
+        and shipment["state"] == ShipmentState.RESERVED
+        and time.time() >= shipment["expires_at"]
+    ):
+        shipment["state"] = ShipmentState.CANCELLED
+        shipment["expired"] = True
 
 @app.get("/health")
 def health_check():
@@ -44,6 +57,7 @@ def get_state():
 
 @app.post("/tcc/try")
 def try_shipping(request: ShippingTryRequest):
+    expire_shipment_if_needed()
     if request.fail:
         raise HTTPException(
             status_code=500,
@@ -78,6 +92,7 @@ def try_shipping(request: ShippingTryRequest):
         "username": request.username,
         "address": request.address,
         "state": ShipmentState.RESERVED,
+        "expires_at": time.time() + TTL_SECOND,
     }
 
     return {
@@ -89,6 +104,7 @@ def try_shipping(request: ShippingTryRequest):
 
 @app.put("/tcc/confirm")
 def confirm_shipping(request: TransactionRequest):
+    expire_shipment_if_needed()
     shipment = shipments.get(request.transaction_id)
 
     if shipment is None:
@@ -121,6 +137,7 @@ def confirm_shipping(request: TransactionRequest):
 
 @app.put("/tcc/cancel")
 def cancel_shipping(request: TransactionRequest):
+    expire_shipment_if_needed()
     shipment = shipments.get(request.transaction_id)
 
     if shipment is None:

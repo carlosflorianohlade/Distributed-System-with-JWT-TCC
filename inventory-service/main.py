@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 app = FastAPI(title="Inventory Service")
 
 TTL_SECONDS = int(os.getenv("TTL_SECONDS", "30"))
-BOOL_EXPIRED = True
 
 class ReservationState(str, Enum):
     RESERVED = "RESERVED"
@@ -49,7 +48,7 @@ products = {
 
 reservations: dict[str, dict] = {}
 
-def expire_reservation_if_needed(transaction_id: str) -> None:
+def expire_inventory_if_needed(transaction_id: str) -> None:
     reservation = reservations.get(transaction_id)
 
     if (
@@ -60,7 +59,7 @@ def expire_reservation_if_needed(transaction_id: str) -> None:
         product = products[reservation["product_id"]]
         product["reserved"] -= reservation["quantity"]
         reservation["state"] = ReservationState.CANCELLED
-        reservation["expired"] = BOOL_EXPIRED
+        reservation["expired"] = True
 
 @app.get("/health")
 def health_check():
@@ -102,7 +101,7 @@ def get_state():
 
 @app.post("/tcc/try")
 def try_inventory(request: InventoryTryRequest):
-    expire_reservation_if_needed(request.transaction_id)
+    expire_inventory_if_needed(request.transaction_id)
     existing = reservations.get(request.transaction_id)
 
     if existing is not None:
@@ -161,7 +160,7 @@ def try_inventory(request: InventoryTryRequest):
 
 @app.put("/tcc/confirm")
 def confirm_inventory(request: TransactionRequest):
-    expire_reservation_if_needed(request.transaction_id)
+    expire_inventory_if_needed(request.transaction_id)
     reservation = reservations.get(request.transaction_id)
 
     if reservation is None:
@@ -205,7 +204,7 @@ def confirm_inventory(request: TransactionRequest):
 
 @app.put("/tcc/cancel")
 def cancel_inventory(request: TransactionRequest):
-    expire_reservation_if_needed(request.transaction_id)
+    expire_inventory_if_needed(request.transaction_id)
     reservation = reservations.get(request.transaction_id)
 
     if reservation is None:
