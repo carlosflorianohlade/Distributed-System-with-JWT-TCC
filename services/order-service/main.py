@@ -68,6 +68,9 @@ class CreateOrderRequest(BaseModel):
     address: str = Field(min_length=1, max_length=300)
     fail_payment: bool = False
     fail_shipping: bool = False
+    # Payment method di test Stripe (es. pm_card_visa, pm_card_chargeDeclined).
+    # Se omesso il payment-service usa il default configurato.
+    payment_method: str | None = None
 
 
 class TryPhaseError(Exception):
@@ -179,6 +182,7 @@ def new_transaction(
         "unit_price": unit_price,
         "amount": amount,
         "address": request.address,
+        "payment_intent_id": None,
         "status": TransactionStatus.TRYING.value,
         "decision": TransactionDecision.UNDECIDED.value,
         "participants": {
@@ -198,7 +202,7 @@ async def try_participant(
     transaction_id: str,
     participant: str,
     payload: dict,
-) -> None:
+) -> dict:
     transaction = orders[transaction_id]
 
     try:
@@ -233,6 +237,11 @@ async def try_participant(
     )
     persist_orders()
 
+    try:
+        return response.json()
+    except ValueError:
+        return {}
+
 
 async def execute_try_phase(
     client: httpx.AsyncClient,
@@ -252,7 +261,7 @@ async def execute_try_phase(
         },
     )
 
-    await try_participant(
+    payment_result = await try_participant(
         client,
         transaction_id,
         "payment",
@@ -261,8 +270,15 @@ async def execute_try_phase(
             "username": username,
             "amount": amount,
             "fail": request.fail_payment,
+            "payment_method": request.payment_method,
         },
     )
+
+    # Collega l'ordine al PaymentIntent Stripe (autorizzazione sulla carta)
+    orders[transaction_id]["payment_intent_id"] = payment_result.get(
+        "payment_intent_id"
+    )
+    persist_orders()
 
     await try_participant(
         client,
@@ -446,6 +462,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 def health_check():
@@ -576,6 +601,7 @@ async def create_order(
                     "status": transaction["status"],
                     "decision": transaction["decision"],
                     "failed_participant": error.participant,
+                    "reason": error.message,
                 },
             ) from error
 
@@ -589,6 +615,7 @@ async def create_order(
             return {
                 "status": "ORDER_CONFIRM_PENDING",
                 "transaction_id": transaction_id,
+                "payment_intent_id": transaction.get("payment_intent_id"),
                 "decision": transaction["decision"],
                 "participants": transaction["participants"],
             }
@@ -600,6 +627,7 @@ async def create_order(
             "quantity": request.quantity,
             "unit_price": product["price"],
             "amount": amount,
+            "payment_intent_id": transaction.get("payment_intent_id"),
             "decision": transaction["decision"],
             "participants": transaction["participants"],
         }

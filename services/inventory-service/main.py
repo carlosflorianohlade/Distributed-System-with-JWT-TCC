@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="Inventory Service")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 TTL_SECONDS = int(os.getenv("TTL_SECONDS", "30"))
 
 class ReservationState(str, Enum):

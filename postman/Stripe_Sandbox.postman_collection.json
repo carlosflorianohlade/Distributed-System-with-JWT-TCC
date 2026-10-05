@@ -1,0 +1,847 @@
+{
+  "info": {
+    "name": "Stripe Sandbox - Order + Payment TCC",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 - Flusso ordine con Stripe",
+      "item": [
+        {
+          "name": "Payment health (mode)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/health",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Stripe sandbox\", () => { pm.expect(pm.response.json().mode).to.eql('stripe-sandbox'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - salva token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"carlos\",\n  \"password\": \"admin\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 + token\", () => { pm.response.to.have.status(200); pm.collectionVariables.set('token', pm.response.json().access_token); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ordine COMMIT - Stripe authorize + capture",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\",\n  \"payment_method\": \"pm_card_visa\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"ORDER_CONFIRMED\", () => { const b=pm.response.json(); pm.response.to.have.status(200); pm.expect(b.status).to.eql('ORDER_CONFIRMED'); pm.expect(b.decision).to.eql('COMMIT'); });",
+                  "pm.test(\"PaymentIntent Stripe\", () => { const b=pm.response.json(); pm.expect(b.payment_intent_id).to.match(/^pi_/); pm.collectionVariables.set('paymentIntentId', b.payment_intent_id); pm.collectionVariables.set('lastOrderId', b.transaction_id); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verifica pagamento CONFIRMED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/state",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "state"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Stato CONFIRMED\", () => { const p=pm.response.json().payments[pm.collectionVariables.get('lastOrderId')]; pm.expect(p.state).to.eql('CONFIRMED'); pm.expect(p.payment_intent_id).to.eql(pm.collectionVariables.get('paymentIntentId')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ordine con carta rifiutata - ROLLBACK",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\",\n  \"payment_method\": \"pm_card_chargeDeclined\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409 + ROLLBACK\", () => { const b=pm.response.json(); pm.response.to.have.status(409); pm.expect(b.detail.decision).to.eql('ROLLBACK'); pm.expect(b.detail.failed_participant).to.eql('payment'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ordine con errore shipping - ROLLBACK (Stripe cancel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\",\n  \"payment_method\": \"pm_card_visa\",\n  \"fail_shipping\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"ROLLBACK\", () => { const b=pm.response.json(); pm.expect(b.detail.decision).to.eql('ROLLBACK'); pm.collectionVariables.set('lastOrderId', b.detail.transaction_id); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verifica pagamento CANCELLED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/state",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "state"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Stato CANCELLED\", () => { const p=pm.response.json().payments[pm.collectionVariables.get('lastOrderId')]; pm.expect(p.state).to.eql('CANCELLED'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Utenti con carta Stripe",
+      "item": [
+        {
+          "name": "1. Crea carlos - carta valida",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/users/carlos",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "carlos"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_method\": \"pm_card_visa\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Customer creato\", () => { const b=pm.response.json(); pm.response.to.have.status(200); pm.expect(b.customer_id).to.match(/^cus_/); pm.expect(b.payment_method).to.eql('pm_card_visa'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Crea gabriele - fondi insufficienti",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/users/gabriele",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "gabriele"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_method\": \"pm_card_chargeDeclinedInsufficientFunds\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Customer creato\", () => { const b=pm.response.json(); pm.response.to.have.status(200); pm.expect(b.customer_id).to.match(/^cus_/); pm.expect(b.payment_method).to.eql('pm_card_chargeDeclinedInsufficientFunds'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Login gabriele",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"gabriele\",\n  \"password\": \"gabrielepass\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"token\", () => { pm.response.to.have.status(200); pm.collectionVariables.set('token', pm.response.json().access_token); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Ordine gabriele - ROLLBACK (fondi insufficienti)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409 + ROLLBACK + fondi insufficienti\", () => { const b=pm.response.json(); pm.response.to.have.status(409); pm.expect(b.detail.decision).to.eql(\"ROLLBACK\"); pm.expect(b.detail.failed_participant).to.eql(\"payment\"); pm.expect(b.detail.reason.toLowerCase()).to.include(\"insufficient\"); pm.collectionVariables.set(\"lastOrderId\", b.detail.transaction_id); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Login carlos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"carlos\",\n  \"password\": \"admin\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"token\", () => { pm.response.to.have.status(200); pm.collectionVariables.set('token', pm.response.json().access_token); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Ordine carlos - COMMIT",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{orderBaseUrl}}/orders",
+              "host": [
+                "{{orderBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": \"p2\",\n  \"quantity\": 1,\n  \"address\": \"Via Roma 1\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"COMMIT\", () => { const b=pm.response.json(); pm.response.to.have.status(200); pm.expect(b.decision).to.eql('COMMIT'); pm.expect(b.payment_intent_id).to.match(/^pi_/); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Elenco utenti registrati",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/users",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            }
+          },
+          "event": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Payment diretto",
+      "item": [
+        {
+          "name": "Try (pm_card_visa)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/try",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{stripeTx}}\",\n  \"username\": \"carlos\",\n  \"amount\": 49.9,\n  \"payment_method\": \"pm_card_visa\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('stripeTx','stripe-' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"RESERVED\", () => { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('RESERVED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Try identico - idempotenza",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/try",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{stripeTx}}\",\n  \"username\": \"carlos\",\n  \"amount\": 49.9,\n  \"payment_method\": \"pm_card_visa\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"ALREADY_PROCESSED\", () => { pm.expect(pm.response.json().status).to.eql('ALREADY_PROCESSED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm - capture",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{stripeTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"CONFIRMED\", () => { pm.expect(pm.response.json().status).to.eql('CONFIRMED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm ripetuto",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/confirm",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{stripeTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"ALREADY_CONFIRMED\", () => { pm.expect(pm.response.json().status).to.eql('ALREADY_CONFIRMED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel dopo Confirm - 409",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/cancel",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{stripeTx}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409\", () => { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Try carta rifiutata",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/try",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"stripe-declined-{{$timestamp}}\",\n  \"username\": \"carlos\",\n  \"amount\": 20,\n  \"payment_method\": \"pm_card_chargeDeclined\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409\", () => { pm.response.to.have.status(409); pm.expect(pm.response.json().detail).to.include('rifiutato'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Try + Cancel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/try",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "try"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{stripeTx}}-c\",\n  \"username\": \"carlos\",\n  \"amount\": 15,\n  \"payment_method\": \"pm_card_visa\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"RESERVED\", () => { pm.expect(pm.response.json().status).to.eql('RESERVED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel - rilascia autorizzazione",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/tcc/cancel",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "tcc",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{stripeTx}}-c\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"CANCELLED\", () => { pm.expect(pm.response.json().status).to.eql('CANCELLED'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "lastOrderId",
+      "value": ""
+    },
+    {
+      "key": "stripeTx",
+      "value": ""
+    },
+    {
+      "key": "paymentIntentId",
+      "value": ""
+    }
+  ]
+}

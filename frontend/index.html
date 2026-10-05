@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TCC Distributed System: client di prova</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <h1>TCC Distributed System</h1>
+  <div>
+    Servizi:
+    <span id="health"></span>
+    <button id="bh" style="margin:0 0 0 12px;padding:3px 10px">Aggiorna</button>
+  </div>
+
+  <section>
+    <h2>1. Login (auth-service)</h2>
+    <div class="row">
+      <div>
+        <label>Utente</label>
+        <input id="u" value="gabriele">
+      </div>
+      <div>
+        <label>Password</label>
+        <input id="p" type="password" value="gabrielepass">
+      </div>
+    </div>
+    <button id="bl">Login</button>
+    <div class="msg" id="m1"></div>
+  </section>
+
+  <section>
+    <h2>2. Carta di test Stripe (payment-service)</h2>
+    <select id="pm">
+      <option value="pm_card_visa">pm_card_visa: pagamento accettato</option>
+      <option value="pm_card_chargeDeclinedInsufficientFunds">pm_card_chargeDeclinedInsufficientFunds: fondi insufficienti</option>
+      <option value="pm_card_chargeDeclined">pm_card_chargeDeclined: carta declinata</option>
+    </select>
+    <button id="bc" disabled>Associa la carta all'utente</button>
+    <div class="msg" id="m2"></div>
+  </section>
+
+  <section>
+    <h2>3. Ordine (order-service)</h2>
+    <div class="row">
+      <div>
+        <label>Prodotto</label>
+        <select id="pr">
+          <option value="p1">p1 Laptop</option>
+          <option value="p2">p2 Keyboard</option>
+          <option value="p3">p3 Headphones</option>
+        </select>
+      </div>
+      <div>
+        <label>Quantità</label>
+        <input id="q" type="number" min="1" value="1">
+      </div>
+    </div>
+    
+    <label>Indirizzo</label>
+    <input id="ad" value="Via dei Priori 10, Perugia">
+    
+    <label class="chk">
+      <input type="checkbox" id="fp"> fail_payment
+    </label>
+    <label class="chk">
+      <input type="checkbox" id="fs"> fail_shipping
+    </label>
+    
+    <button id="bo" disabled>POST /orders</button>
+    <div class="msg" id="m3"></div>
+    <pre id="out" hidden></pre>
+  </section>
+
+  <section>
+    <h2>Avanzamento TCC (da GET /orders)</h2>
+    <div id="st">Nessun ordine ancora.</div>
+  </section>
+
+  <section>
+    <h2>Stato dei servizi</h2>
+    <div class="row">
+      <div>
+        <b>inventory</b>
+        <pre id="s-inv">–</pre>
+      </div>
+      <div>
+        <b>payment</b>
+        <pre id="s-pay">–</pre>
+      </div>
+      <div>
+        <b>shipping</b>
+        <pre id="s-shp">–</pre>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

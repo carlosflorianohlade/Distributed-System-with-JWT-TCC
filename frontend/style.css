@@ -1,0 +1,153 @@
+body {
+  font: 15px/1.5 system-ui, sans-serif;
+  max-width: 1200px;
+  margin: 24px auto;
+  padding: 0 16px;
+  color: #1b2333;
+  background: #f5f7fa;
+}
+
+h1 {
+  font-size: 24px;
+  margin: 0 0 4px;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 0 0 10px;
+}
+
+section {
+  background: #fff;
+  border: 1px solid #d9dfe8;
+  border-radius: 8px;
+  padding: 14px;
+  margin: 12px 0;
+}
+
+/* Form */
+label {
+  display: block;
+  font-size: 13px;
+  color: #566;
+  margin: 8px 0 3px;
+}
+
+input,
+select {
+  padding: 7px 9px;
+  border: 1px solid #c5ccd8;
+  border-radius: 5px;
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+button {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 5px;
+  background: #3949d0;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.chk {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0 0;
+  color: #1b2333;
+}
+
+.chk input {
+  width: auto;
+}
+
+/* Stato dei servizi */
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #aaa;
+  margin: 0 5px 0 12px;
+}
+
+.up {
+  background: #1a9b60;
+}
+
+.down {
+  background: #d2392e;
+}
+
+/* Output */
+pre {
+  background: #eef1f6;
+  padding: 10px;
+  border-radius: 6px;
+  overflow: auto;
+  font-size: 12.5px;
+  margin: 8px 0 0;
+  max-height: 260px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+
+td,
+th {
+  border-bottom: 1px solid #e3e8ef;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+/* Stati TCC */
+.OK {
+  color: #1a9b60;
+  font-weight: 600;
+}
+
+.FAILED {
+  color: #d2392e;
+  font-weight: 600;
+}
+
+.PENDING {
+  color: #b87800;
+  font-weight: 600;
+}
+
+.NOT_STARTED {
+  color: #999;
+}
+
+/* Messaggi */
+.msg {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.err {
+  color: #d2392e;
+}
+
+.good {
+  color: #1a9b60;
+}
