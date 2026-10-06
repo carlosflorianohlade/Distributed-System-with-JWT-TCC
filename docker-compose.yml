@@ -43,7 +43,7 @@ services:
     environment:
       - TTL_SECONDS=60
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
-      - STRIPE_CURRENCY=${STRIPE_CURRENCY}
+      - STRIPE_CURRENCY=${STRIPE_CURRENCY:-eur}
 
   shipping-service:
     build: ./services/shipping-service

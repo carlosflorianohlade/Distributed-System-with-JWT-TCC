@@ -1,8 +1,10 @@
 # Distributed System with JWT and TCC
 
-A microservices-based distributed order management system built with **FastAPI**, **JWT authentication**, **Docker Compose**, and the **Try-Confirm/Cancel (TCC)** transaction pattern.
+A microservices-based distributed order management system built with **FastAPI**, **JWT authentication**, **Docker Compose**, the **Try-Confirm/Cancel (TCC)** transaction pattern, and real card payments through the **Stripe sandbox**.
 
 The project demonstrates how a coordinator can manage a distributed business operation across independent services while handling partial failures, compensation, idempotent operations, persistent decisions, retries, transaction recovery, and time-bounded reservations through a configurable TTL.
+
+The payment participant is backed by the **Stripe test environment**: Try authorizes the amount on a test card, Confirm captures it, and Cancel releases the authorization. A small **web client** (`frontend/`) shows the whole flow in the browser.
 
 ---
 
@@ -13,6 +15,8 @@ The project demonstrates how a coordinator can manage a distributed business ope
 - [Architecture](#architecture)
 - [Services](#services)
 - [TCC Pattern](#tcc-pattern)
+- [Stripe Sandbox Integration](#stripe-sandbox-integration)
+- [Web Client](#web-client)
 - [Transaction Decision and Status](#transaction-decision-and-status)
 - [Distributed Order Flow](#distributed-order-flow)
 - [Idempotency and Empty Cancel](#idempotency-and-empty-cancel)
@@ -43,10 +47,12 @@ This project simulates the creation of an order involving five independent micro
 - an authentication service;
 - an order coordinator;
 - an inventory participant;
-- a payment participant;
+- a payment participant, integrated with the Stripe sandbox;
 - a shipping participant.
 
 The client authenticates through the `auth-service` and receives a JWT. The JWT is then sent to the `order-service`, which coordinates the distributed transaction across inventory, payment, and shipping.
+
+Payments are not simulated with local accounts: the `payment-service` talks to the **Stripe sandbox** using Stripe's test payment methods (`pm_card_visa`, `pm_card_chargeDeclinedInsufficientFunds`, `pm_card_chargeDeclined`). No real money is ever moved. A static web page in `frontend/` lets you run the whole scenario from the browser.
 
 The distributed transaction is implemented using the **Try-Confirm/Cancel pattern**.
 
@@ -72,7 +78,10 @@ The project demonstrates the following distributed systems concepts:
 - retry mechanisms;
 - recovery of incomplete transactions;
 - separation between global decision and execution status;
-- containerized deployment with Docker Compose.
+- mapping of TCC onto a real external payment provider (authorize / capture / cancel);
+- idempotency toward an external API through Stripe idempotency keys;
+- containerized deployment with Docker Compose;
+- a browser client that visualizes the TCC progress in real time.
 
 ---
 
@@ -116,6 +125,23 @@ The project demonstrates the following distributed systems concepts:
                          +-------------------+
 ```
 
+The `payment-service` also calls the Stripe API, and the web client in `frontend/` talks directly to every service (all of them enable CORS):
+
+```text
+   +----------------------+            +----------------------+
+   |  Web client          |  HTTP/CORS |  auth / order /      |
+   |  frontend/ (static)  +----------->|  inventory / payment |
+   |                      |            |  / shipping          |
+   +----------------------+            +-----------+----------+
+                                                   |
+                                       payment-service only
+                                                   v
+                                       +----------------------+
+                                       |  Stripe sandbox      |
+                                       |  (test mode, sk_test)|
+                                       +----------------------+
+```
+
 Each service owns its own local state and communicates with the other services through HTTP APIs.
 
 There is no shared in-memory state between services.
@@ -129,7 +155,7 @@ There is no shared in-memory state between services.
 | `auth-service` | `8000` | Authenticates users and generates JWT access tokens |
 | `order-service` | `8001` | Coordinates the distributed TCC transaction |
 | `inventory-service` | `8002` | Reserves, confirms, or releases product quantities |
-| `payment-service` | `8003` | Blocks, charges, or releases user funds |
+| `payment-service` | `8003` | Authorizes, captures, or releases card payments on the Stripe sandbox; registers the test card of each user |
 | `shipping-service` | `8004` | Prepares, confirms, or cancels shipments |
 
 Each service is implemented as an independent FastAPI application and runs inside its own Docker container.
@@ -153,7 +179,7 @@ Each participant reserves the resource required by the transaction without apply
 In this project:
 
 - inventory increases the product's `reserved` quantity;
-- payment increases the account's `blocked` amount;
+- payment creates a Stripe `PaymentIntent` with `capture_method=manual`, which **authorizes** the amount on the card without charging it;
 - shipping creates a shipment in the `RESERVED` state.
 
 A successful Try means:
@@ -175,7 +201,7 @@ If every Try succeeds, the coordinator decides `COMMIT` and asks every participa
 In this project:
 
 - inventory decreases both `reserved` and `stock`;
-- payment decreases both `blocked` and `balance`;
+- payment **captures** the authorized `PaymentIntent`, so the money is actually charged;
 - shipping changes the shipment state to `CONFIRMED`.
 
 After the coordinator has persisted the `COMMIT` decision, a Confirm failure does **not** cause a rollback. The coordinator keeps the `COMMIT` decision and retries the missing Confirm operations.
@@ -187,10 +213,159 @@ If at least one Try fails before the commit decision, the coordinator decides `R
 In this project:
 
 - inventory decreases `reserved` without changing `stock`;
-- payment decreases `blocked` without changing `balance`;
+- payment **cancels** the `PaymentIntent`, releasing the authorization without any charge;
 - shipping changes the shipment state to `CANCELLED`.
 
 The coordinator sends Cancel to every participant. Participants that never created a reservation return a successful empty-cancel response.
+
+---
+
+## Stripe Sandbox Integration
+
+The `payment-service` replaces the former simulated accounts (`balance` / `blocked`) with the Stripe **test mode** API. The service refuses to start unless `STRIPE_SECRET_KEY` begins with `sk_test_` or `rk_test_`: live keys (`sk_live_`), publishable keys (`pk_`), or an empty value stop the container with an explicit error message, so real money can never be charged.
+
+### TCC to Stripe mapping
+
+| TCC phase | Endpoint | Stripe operation | Result on the card |
+|---|---|---|---|
+| Try | `POST /tcc/try` | `PaymentIntent.create(capture_method="manual", confirm=True)` | Amount authorized, not charged (`requires_capture`) |
+| Confirm | `PUT /tcc/confirm` | `PaymentIntent.capture(...)` | Amount charged (`succeeded`) |
+| Cancel | `PUT /tcc/cancel` | `PaymentIntent.cancel(...)` | Authorization released (`canceled`) |
+| TTL expiry | lazy check | `PaymentIntent.cancel(...)` | Authorization released |
+
+Stripe is a natural fit for TCC: the authorize-then-capture model is exactly a Try followed by a Confirm, and cancelling an uncaptured `PaymentIntent` is the Cancel.
+
+If the Try returns a `PaymentIntent` whose status is not `requires_capture`, the service cancels it and answers `409`.
+
+### Test payment methods
+
+Each user is associated with one Stripe test payment method:
+
+| Payment method | Behavior |
+|---|---|
+| `pm_card_visa` | Authorization and capture succeed |
+| `pm_card_chargeDeclinedInsufficientFunds` | Declined with *insufficient funds* |
+| `pm_card_chargeDeclined` | Declined with a generic *card declined* |
+
+The accepted format is `pm_card_<name>`, so any other Stripe test payment method can also be used. The default is `pm_card_visa` (`STRIPE_DEFAULT_PAYMENT_METHOD`).
+
+### Users and Stripe Customers
+
+```http
+PUT  /users/{username}   body: { "payment_method": "pm_card_visa" }
+GET  /users
+```
+
+`PUT /users/{username}` creates (or updates) a Stripe **Customer** with:
+
+- email `<username>@tcc-demo.test`;
+- metadata `username` and `test_payment_method`.
+
+The Customer on Stripe is the source of truth: it is looked up by email, and an in-memory cache avoids repeated lookups. For this reason the card chosen for a user survives a restart of the container.
+
+> Stripe's own REST API has no `PUT` or `PATCH`: updates are sent with `POST`. Even though this service exposes `PUT /users/{username}`, the Stripe SDK sends `POST /v1/customers/{id}` and that is what appears in the Stripe dashboard logs.
+
+### Which card is charged
+
+During Try, the payment method is chosen in this order:
+
+1. `payment_method` sent in the `POST /orders` request;
+2. the card registered for the user with `PUT /users/{username}`;
+3. `STRIPE_DEFAULT_PAYMENT_METHOD` (`pm_card_visa`).
+
+### Idempotency toward Stripe
+
+The `Idempotency-Key` header is built from the transaction identifier:
+
+```text
+tcc-try-<transaction_id>
+tcc-confirm-<transaction_id>
+```
+
+A retried Try or Confirm therefore never authorizes or captures the same amount twice. In addition:
+
+- if a capture fails but the `PaymentIntent` is already `succeeded` (lost response), Confirm answers `ALREADY_CONFIRMED`;
+- the SDK is configured with `max_network_retries = 2`.
+
+### Error translation
+
+| Stripe error | HTTP status returned | Effect on the coordinator |
+|---|---|---|
+| `CardError` (declined card, insufficient funds) | `409` | Try fails, `ROLLBACK` |
+| `InvalidRequestError` | `409` | Try fails, `ROLLBACK` |
+| `APIConnectionError`, `RateLimitError` | `503` | Try fails; a Confirm/Cancel is retried |
+| any other Stripe error | `502` | Try fails; a Confirm/Cancel is retried |
+
+### Amounts
+
+Amounts are converted from euros to cents with `int(round(amount * 100))`, because Stripe works in minor units. The currency comes from `STRIPE_CURRENCY`.
+
+### Link with the order log
+
+The coordinator stores the identifier of the authorization in the transaction log:
+
+```json
+"payment_intent_id": "pi_..."
+```
+
+The same value is returned by `POST /orders`, so each order can be matched with the corresponding payment in the Stripe dashboard (the `PaymentIntent` also carries `transaction_id` and `username` in its metadata).
+
+---
+
+## Web Client
+
+The `frontend/` directory contains a small static client written in plain HTML, CSS, and JavaScript. It has no build step and no dependencies.
+
+```text
+frontend/
+├── index.html
+├── script.js
+└── style.css
+```
+
+### Running the client
+
+Start the backend first, then either open `frontend/index.html` directly in the browser or serve the folder:
+
+```bash
+cd frontend
+python -m http.server 5500
+```
+
+and open `http://localhost:5500`. The client calls the services on ports `8000`-`8004` of the same host (`localhost` when opened from a file). Every service enables CORS, so no proxy is needed.
+
+### What the page does
+
+| Step | Action | Backend call |
+|---|---|---|
+| Header | Shows an up/down indicator for each service | `GET /health` on all five services |
+| 1. Login | Authenticates and keeps the JWT in memory | `POST /login` on `auth-service` |
+| 2. Test card | Associates one of the three Stripe test cards with the logged-in user | `PUT /users/{username}` on `payment-service` |
+| 3. Order | Sends product, quantity, address, `fail_payment`, `fail_shipping`, and the selected card | `POST /orders` on `order-service` |
+| TCC progress | Table with Try / Confirm / Cancel of each participant, plus `status`, `decision`, and `PaymentIntent` | `GET /orders`, polled every 400 ms during the order |
+| Service state | Raw `/state` JSON of inventory, payment, and shipping | `GET /state` |
+
+The order button is enabled only after login and card association, and the quantity is validated before sending. While the request is running, the page polls the coordinator, so the Try, Confirm, and Cancel columns can be seen changing in real time. At the end the raw HTTP response is shown.
+
+### Demo scenarios
+
+| Card | Flags | Expected outcome |
+|---|---|---|
+| `pm_card_visa` | none | `COMMIT` / `CONFIRMED`: authorization captured on Stripe |
+| `pm_card_chargeDeclinedInsufficientFunds` | none | Payment Try fails, `ROLLBACK` / `CANCELLED` (HTTP `409`) |
+| `pm_card_chargeDeclined` | none | Payment Try fails, `ROLLBACK` / `CANCELLED` (HTTP `409`) |
+| `pm_card_visa` | `fail_shipping` | Payment authorized, shipping Try fails, authorization **cancelled** on Stripe |
+| any | `fail_payment` | Simulated payment error, `ROLLBACK` |
+
+### Scope of the client
+
+The client is a demonstration tool and intentionally keeps things simple:
+
+- it **does not implement recovery**: there is no button for `POST /orders/{transaction_id}/recover`, so a transaction left in `CONFIRM_PENDING` or `CANCEL_PENDING` has to be recovered with Postman, curl, or by restarting the order service;
+- the progress panel shows only the order just created, not the history of previous orders;
+- the JWT is kept in a JavaScript variable only (not in `localStorage`), so reloading the page requires a new login;
+- the order does not send a card: the backend uses the one registered in step 2, so changing the card in the dropdown disables the order button until the card is associated again;
+- errors show the failed participant and the reason, and an expired JWT (HTTP `401`) asks for a new login.
 
 ---
 
@@ -446,18 +621,18 @@ The current Docker Compose configuration passes the same value to the three part
 ```yaml
 inventory-service:
   environment:
-    - TTL_SECONDS=10
+    - TTL_SECONDS=60
 
 payment-service:
   environment:
-    - TTL_SECONDS=10
+    - TTL_SECONDS=60
 
 shipping-service:
   environment:
-    - TTL_SECONDS=10
+    - TTL_SECONDS=60
 ```
 
-The value `10` seconds is useful for demonstrations and fast tests. For normal execution, a larger value such as `60` seconds is recommended.
+The value `60` seconds is suitable for normal execution. For the TTL tests described below it can be temporarily lowered to `10`.
 
 ### Lazy expiration strategy
 
@@ -493,13 +668,12 @@ The product quantity is released because it was never committed.
 If a payment reservation is still `RESERVED` after `expires_at`:
 
 ```text
-blocked decreases
-balance remains unchanged
+the Stripe PaymentIntent is cancelled
 state becomes CANCELLED
 expired becomes true
 ```
 
-The blocked funds are released without charging the account.
+The authorization on the card is released without charging anything.
 
 ### Shipping expiration
 
@@ -561,16 +735,16 @@ RETRY_DELAY_SECONDS   = 1 second
 a participant failure can keep one second-phase operation active for approximately 29 seconds in the worst case. Therefore:
 
 ```text
-TTL_SECONDS=10
-```
-
-should be treated as a test value, while:
-
-```text
 TTL_SECONDS=60
 ```
 
-is a safer value for normal demonstrations.
+is longer than this window and is the value used by the current configuration, while:
+
+```text
+TTL_SECONDS=10
+```
+
+should be treated only as a test value for the TTL tests.
 
 A production implementation would normally add persistent participant state, renewable leases, and a reconciliation mechanism between the coordinator decision and expired reservations.
 
@@ -602,6 +776,8 @@ The log contains:
 
 - request data;
 - transaction ID;
+- username, product, quantity, amount, and address;
+- Stripe `payment_intent_id`;
 - decision;
 - status;
 - participant Try/Confirm/Cancel states;
@@ -659,36 +835,41 @@ The endpoint retries the correct second-phase operation according to the persist
 ```text
 Distributed-System-with-JWT-TCC/
 │
-├── auth-service/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
+├── services/
+│   ├── auth-service/
+│   │   ├── main.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── order-service/
+│   │   ├── main.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── inventory-service/
+│   │   ├── main.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── payment-service/          (Stripe sandbox integration)
+│   │   ├── main.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   └── shipping-service/
+│       ├── main.py
+│       ├── requirements.txt
+│       └── Dockerfile
 │
-├── order-service/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── inventory-service/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── payment-service/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── shipping-service/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
+├── frontend/
+│   ├── index.html
+│   ├── script.js
+│   └── style.css
 │
 ├── postman/
 │   ├── Distributed_TCC_Complete_Test_Suite.postman_collection.json
+│   ├── Stripe_Sandbox.postman_collection.json
 │   └── Distributed_TCC_Local.postman_environment.json
 │
 ├── docker-compose.yml
+├── .env                          (not versioned: Stripe key)
+├── .gitignore
 └── README.md
 ```
 
@@ -702,9 +883,11 @@ Distributed-System-with-JWT-TCC/
 - HTTPX
 - python-jose
 - JWT
+- Stripe Python SDK (sandbox / test mode)
 - Docker
 - Docker Compose
 - Postman
+- HTML, CSS, and vanilla JavaScript (web client)
 
 ---
 
@@ -714,7 +897,9 @@ To run the project, install:
 
 - Docker;
 - Docker Compose;
-- Postman, optionally, for API testing.
+- a free Stripe account with **test mode** enabled and a secret test key (`sk_test_...`), available in the Stripe dashboard under *Developers → API keys*;
+- Postman, optionally, for API testing;
+- a web browser for the web client.
 
 No local Python installation is required when running the system through Docker.
 
@@ -734,10 +919,26 @@ The main Docker Compose environment variables are:
 | `RETRY_DELAY_SECONDS` | order | Delay between attempts |
 | `ORDERS_FILE` | order | Persistent transaction log location |
 | `TTL_SECONDS` | inventory, payment, shipping | Maximum lifetime of a `RESERVED` participant reservation |
+| `STRIPE_SECRET_KEY` | payment | Stripe **test** secret key (`sk_test_...` or `rk_test_...`); required |
+| `STRIPE_CURRENCY` | payment | Currency of the PaymentIntents, for example `eur` |
+| `STRIPE_DEFAULT_PAYMENT_METHOD` | payment | Card used when none is specified; defaults to `pm_card_visa` (not set in the Compose file) |
 
 The Compose configuration provides development defaults.
 
-`TTL_SECONDS` is currently set to `10` for fast TTL demonstrations. For normal execution, use a value greater than the coordinator retry window, such as `60`.
+`TTL_SECONDS` is currently set to `60`, which is greater than the coordinator retry window. Use a lower value (for example `10`) only for the TTL tests.
+
+### Stripe configuration (`.env`)
+
+The Stripe variables are read by Docker Compose from a `.env` file in the project root. The file is listed in `.gitignore` and must never be committed. Create it before starting the system:
+
+```env
+STRIPE_SECRET_KEY=sk_test_your_key_here
+STRIPE_CURRENCY=eur
+```
+
+`STRIPE_SECRET_KEY` is required. `STRIPE_CURRENCY` is optional: `docker-compose.yml` forwards it as `${STRIPE_CURRENCY:-eur}`, so `eur` is used when it is not defined.
+
+If the key is missing or is not a test key, the `payment-service` container exits at startup with a message explaining the reason (the key itself is never printed).
 
 For a real deployment, secrets must not be stored in the repository or committed to version control.
 
@@ -795,6 +996,10 @@ docker compose logs -f order-service
 | Payment | `http://localhost:8003` |
 | Shipping | `http://localhost:8004` |
 
+### Web client
+
+Open `frontend/index.html` in the browser (see [Web Client](#web-client)).
+
 ### Swagger documentation
 
 | Service | Swagger |
@@ -851,7 +1056,7 @@ Response:
 Authorization: Bearer YOUR_ACCESS_TOKEN
 ```
 
-The `order-service` verifies the token signature, expiration, and the presence of the `sub` claim before starting the distributed transaction.
+The token is valid for 60 minutes. The `order-service` verifies the token signature, expiration, and the presence of the `sub` claim before starting the distributed transaction. The `sub` claim (the username) is also the user whose Stripe card is charged.
 
 ---
 
@@ -874,6 +1079,8 @@ POST /orders
 POST /orders/{transaction_id}/recover
 ```
 
+`POST /orders` accepts the optional field `payment_method` (for example `pm_card_visa`), which selects the Stripe test card for that order.
+
 ### Inventory service
 
 ```http
@@ -891,10 +1098,14 @@ PUT  /tcc/cancel
 ```http
 GET  /health
 GET  /state
+GET  /users
+PUT  /users/{username}
 POST /tcc/try
 PUT  /tcc/confirm
 PUT  /tcc/cancel
 ```
+
+`PUT /users/{username}` registers the Stripe test card of a user. The username must match `^[a-z0-9_.-]{1,50}$`.
 
 ### Shipping service
 
@@ -963,6 +1174,7 @@ Example response:
   "quantity": 2,
   "unit_price": 69.99,
   "amount": 139.98,
+  "payment_intent_id": "pi_...",
   "decision": "COMMIT",
   "participants": {
     "inventory": {
@@ -983,6 +1195,63 @@ Example response:
   }
 }
 ```
+
+### Register a Stripe test card for a user
+
+```http
+PUT http://localhost:8003/users/carlos
+Content-Type: application/json
+```
+
+```json
+{
+  "payment_method": "pm_card_chargeDeclinedInsufficientFunds"
+}
+```
+
+Response:
+
+```json
+{
+  "username": "carlos",
+  "customer_id": "cus_...",
+  "payment_method": "pm_card_chargeDeclinedInsufficientFunds"
+}
+```
+
+### Order paid with Stripe
+
+```json
+{
+  "product_id": "p1",
+  "quantity": 1,
+  "address": "Via Roma 1",
+  "fail_payment": false,
+  "fail_shipping": false,
+  "payment_method": "pm_card_visa"
+}
+```
+
+Expected flow:
+
+```text
+TRY payment     -> PaymentIntent authorized (requires_capture)
+CONFIRM payment -> PaymentIntent captured   (succeeded)
+```
+
+### Declined card
+
+Using `pm_card_chargeDeclinedInsufficientFunds` or `pm_card_chargeDeclined`:
+
+```text
+TRY inventory -> OK
+TRY payment   -> FAIL (Stripe card error, HTTP 409)
+
+decision = ROLLBACK
+status   = CANCELLED
+```
+
+The inventory reservation is released and no payment remains authorized.
 
 ### Simulated payment failure
 
@@ -1095,42 +1364,36 @@ expired = true
 
 ### Payment state
 
-An account contains:
+`GET /state` on the payment service returns, for each transaction:
 
 ```text
-balance
-blocked
+transaction_id
+username
+amount
+payment_intent_id
+payment_method
+state
+expires_at
+expired
 ```
 
-During Try:
+The money itself is kept by Stripe, not by the service. The local `state` follows the status of the `PaymentIntent`:
 
-```text
-balance unchanged
-blocked increased
-```
-
-After Confirm:
-
-```text
-balance decreased
-blocked decreased
-```
-
-After Cancel:
-
-```text
-balance unchanged
-blocked decreased
-```
+| Local state | Stripe PaymentIntent | Meaning |
+|---|---|---|
+| `RESERVED` | `requires_capture` | Amount authorized on the card |
+| `CONFIRMED` | `succeeded` | Amount captured |
+| `CANCELLED` | `canceled` | Authorization released |
 
 After TTL expiration:
 
 ```text
-balance unchanged
-blocked decreased
 state = CANCELLED
 expired = true
+PaymentIntent cancelled on Stripe
 ```
+
+The same information can be checked in the Stripe dashboard (test mode) under *Payments*.
 
 ### Shipping state
 
@@ -1152,6 +1415,7 @@ The `postman/` directory contains:
 
 ```text
 Distributed_TCC_Complete_Test_Suite.postman_collection.json
+Stripe_Sandbox.postman_collection.json
 Distributed_TCC_Local.postman_environment.json
 ```
 
@@ -1190,7 +1454,19 @@ Authorization: Bearer {{token}}
 06 - Recovery manuale
 ```
 
-The direct participant tests use fixed transaction IDs. Before repeating the entire suite, either:
+### Stripe collection
+
+`Stripe_Sandbox.postman_collection.json` contains the payment scenarios and is organized in three folders:
+
+| Folder | Content |
+|---|---|
+| `01 - Flusso ordine con Stripe` | Payment health, login, successful order (authorize + capture), order with a declined card (`ROLLBACK`), order with a shipping error (`ROLLBACK`, Stripe cancel), payment state checks |
+| `03 - Utenti con carta Stripe` | Registers `carlos` with a valid card and `gabriele` with insufficient funds, then runs one order for each user, and lists the registered users |
+| `02 - Payment diretto` | Direct calls to the payment participant: Try, idempotent Try, Confirm (capture), repeated Confirm, Cancel after Confirm (`409`), declined card, Try + Cancel |
+
+The folders are stored in the file in the order `01`, `03`, `02`. Run them after the stack has started with a valid `STRIPE_SECRET_KEY`, and check the resulting `PaymentIntent` objects in the Stripe dashboard.
+
+The original suite also contains the direct participant tests, which use fixed transaction IDs. Before repeating the entire suite, either:
 
 - change the variables `inventoryTx`, `paymentTx`, and `shippingTx`;
 - or restart the participant containers to reset their in-memory state.
@@ -1200,7 +1476,16 @@ The direct participant tests use fixed transaction IDs. Before repeating the ent
 
 ## TTL Test
 
-The current Compose value of `TTL_SECONDS=10` allows the expiration behavior to be tested quickly.
+The Compose value is `TTL_SECONDS=60`. To test expiration quickly, temporarily set `TTL_SECONDS=10` for the three participants in `docker-compose.yml` and recreate them:
+
+```bash
+docker compose up --build -d \
+  inventory-service \
+  payment-service \
+  shipping-service
+```
+
+The steps below assume a TTL of 10 seconds.
 
 ### Inventory TTL
 
@@ -1276,16 +1561,16 @@ Content-Type: application/json
   "transaction_id": "ttl-payment-1",
   "username": "carlos",
   "amount": 100,
-  "fail": false
+  "fail": false,
+  "payment_method": "pm_card_visa"
 }
 ```
 
 Before expiration:
 
 ```text
-balance unchanged
-blocked increased by 100
 state = RESERVED
+PaymentIntent in the Stripe dashboard: requires_capture (authorized, not charged)
 ```
 
 After waiting more than the TTL, send Confirm for the same transaction.
@@ -1294,10 +1579,9 @@ Expected result:
 
 ```text
 409 Conflict
-balance unchanged
-blocked restored
 state = CANCELLED
 expired = true
+PaymentIntent in the Stripe dashboard: canceled
 ```
 
 ### Shipping TTL
@@ -1341,7 +1625,7 @@ expired = true
 
 ### Return to a normal TTL
 
-After the expiration tests, change the Compose configuration to:
+After the expiration tests, restore the Compose configuration to:
 
 ```yaml
 environment:
@@ -1390,7 +1674,7 @@ TRY shipping  -> connection failure
 decision = ROLLBACK
 ```
 
-Because shipping is unavailable, its Cancel also fails.
+Because shipping is unavailable, its Cancel also fails. The payment Cancel, however, is executed during the rollback, so the Stripe authorization is released even if the transaction stays `CANCEL_PENDING`.
 
 The transaction can remain:
 
@@ -1447,12 +1731,15 @@ At startup, the coordinator loads the persistent log and retries the incomplete 
 | Every Try and Confirm succeeds | `COMMIT` | `CONFIRMED` |
 | Inventory Try fails | `ROLLBACK` | `CANCELLED` or `CANCEL_PENDING` |
 | Payment Try fails | `ROLLBACK` | `CANCELLED` or `CANCEL_PENDING` |
+| Stripe declines the card (`pm_card_chargeDeclined...`) | `ROLLBACK` | `CANCELLED` or `CANCEL_PENDING` |
 | Shipping Try fails | `ROLLBACK` | `CANCELLED` or `CANCEL_PENDING` |
 | Confirm temporarily fails after commit | `COMMIT` | `CONFIRM_PENDING` |
+| Stripe temporarily unreachable during Confirm | `COMMIT` | `CONFIRM_PENDING` (retried) |
 | Cancel temporarily fails after rollback | `ROLLBACK` | `CANCEL_PENDING` |
 | Coordinator restarts during Try | `ROLLBACK` during recovery | `CANCELLED` or `CANCEL_PENDING` |
 | Coordinator restarts after commit | `COMMIT` remains unchanged | `CONFIRMED` or `CONFIRM_PENDING` |
 | Participant reservation expires before Confirm | Coordinator decision may still be `COMMIT` | Participant returns `409`; manual reconciliation is required |
+| `payment-service` restarts after a successful Try | `COMMIT` | `CONFIRM_PENDING`: Confirm returns `404`; the authorization stays on Stripe |
 
 ---
 
@@ -1462,7 +1749,7 @@ This is a didactic implementation.
 
 The following limitations are intentional:
 
-- inventory, payment, and shipping keep their state in memory;
+- inventory and shipping keep their state in memory, and the payment service keeps in memory the index that links each transaction to its Stripe `PaymentIntent`;
 - participant state is lost when the corresponding container restarts;
 - only the order coordinator transaction log is persisted;
 - concurrent updates are not synchronized with locks or database transactions;
@@ -1473,11 +1760,14 @@ The following limitations are intentional:
 - the development JWT secret has a Compose default;
 - retry uses a fixed delay rather than exponential backoff;
 - participant TTL expiration is lazy and runs only when another TCC request for the same transaction arrives;
-- the current `TTL_SECONDS=10` value is intended for testing and is shorter than the worst-case coordinator retry window;
+- `TTL_SECONDS=10`, used for the TTL tests, is shorter than the worst-case coordinator retry window; the default `60` is longer;
 - a reservation may expire after a persisted `COMMIT`, requiring reconciliation;
 - empty-cancel does not persist a tombstone for completely unknown transaction identifiers, so full anti-hanging protection is not implemented;
 - the application does not include distributed tracing or metrics;
-- `GET /orders` and diagnostic state endpoints are not access-controlled.
+- `GET /orders` and diagnostic state endpoints are not access-controlled;
+- the services allow CORS from any origin (`*`) so that the web client can call them directly;
+- Stripe is used only in sandbox mode and no webhooks are implemented: the service relies on synchronous API responses;
+- the web client does not implement recovery and shows only the order just created.
 
 ### Recovery scope
 
@@ -1485,7 +1775,7 @@ Recovery is reliable for coordinator restarts while participant containers retai
 
 If a participant restarts after creating a reservation, it loses that reservation and may return `404` to a later Confirm.
 
-A production implementation would persist participant state in databases.
+If the `payment-service` restarts after a successful Try, the link between the transaction and its `PaymentIntent` is lost: Confirm returns `404` and the authorization stays open on Stripe until it is cancelled manually from the dashboard or expires on Stripe's side. A production implementation would persist participant state in databases (or look the `PaymentIntent` up through its `transaction_id` metadata).
 
 ---
 
@@ -1496,6 +1786,8 @@ Future developments could focus on the following areas:
 ### Reliability and Persistence
 
 * Persistent databases for every participant.
+* Rebuild the payment state from Stripe (search by `transaction_id` metadata) after a restart.
+* Stripe webhooks to reconcile asynchronous payment events.
 * Transactional local state updates.
 * A background recovery worker for pending transactions.
 * Background expiration scanning for TTL reservations.
@@ -1511,6 +1803,11 @@ Future developments could focus on the following areas:
 * Asymmetric JWT signing.
 * Service-to-service authentication.
 * Protected diagnostic and state inspection endpoints.
+
+### Web Client
+
+* A recovery button for `POST /orders/{transaction_id}/recover`.
+* History of all orders and live display of the Stripe `PaymentIntent` status.
 
 ### Observability and Testing
 
@@ -1537,5 +1834,6 @@ Future developments could focus on the following areas:
 * Empty-cancel allows participants to accept Cancel even when no local reservation exists.
 * The coordinator persists transaction state and can recover incomplete Confirm or Cancel operations after a restart.
 * Participant reservations have a configurable TTL, which prevents provisional resources from remaining reserved indefinitely once expiration is detected.
+* The payment participant maps TCC onto Stripe: Try authorizes the card, Confirm captures the payment, Cancel releases the authorization.
 * `decision` represents the final outcome selected by the coordinator, while `status` represents the current progress toward that outcome.
-* The project is intentionally simplified for educational purposes: participant state is in memory, TTL expiration is lazy, and full anti-hanging protection is outside the current scope.
+* The project is intentionally simplified for educational purposes: participant state is in memory, payments run only on the Stripe sandbox, TTL expiration is lazy, and full anti-hanging protection is outside the current scope.
