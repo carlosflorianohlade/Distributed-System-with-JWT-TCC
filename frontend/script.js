@@ -1,5 +1,16 @@
+// Indirizzi dei servizi su Azure Container Apps (HTTPS). Usati quando la pagina è online (Vercel).
+// Sostituisci i segnaposto con gli URL stampati dopo il deploy (senza slash finale).
+const AZURE_URLS = {
+  auth:      "https://https://auth-service.blackdesert-700e2a89.francecentral.azurecontainerapps.io-FQDN",
+  order:     "https://https://order-service.blackdesert-700e2a89.francecentral.azurecontainerapps.io-FQDN",
+  inventory: "https://INVENTORY-https://inventory-service.blackdesert-700e2a89.francecentral.azurecontainerapps.io",
+  payment:   "https://payment-service.blackdesert-700e2a89.francecentral.azurecontainerapps.io://PAYMENT-FQDN",
+  shipping:  "https://https://shipping-service.blackdesert-700e2a89.francecentral.azurecontainerapps.io-FQDN"
+};
+// In locale (docker compose) si usano le porte dei servizi sullo stesso host della pagina.
 const H = location.hostname && location.protocol !== "file:" ? location.hostname : "localhost";
-const URL_ = {
+const ONLINE = H.endsWith(".vercel.app");
+const URL_ = ONLINE ? AZURE_URLS : {
   auth:`http://${H}:8000`, order:`http://${H}:8001`, inventory:`http://${H}:8002`,
   payment:`http://${H}:8003`, shipping:`http://${H}:8004`
 };
