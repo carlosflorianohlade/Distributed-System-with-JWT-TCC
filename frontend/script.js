@@ -26,7 +26,11 @@ async function api(base, path, opts = {}) {
   let body; try { body = await r.json(); } catch { body = null; }
   return { ok: r.ok, status: r.status, body };
 }
-const say = (id, txt, cls) => { $(id).textContent = txt; $(id).className = "msg " + (cls || ""); };
+const say = (id, txt, cls) => {
+  const el = $(id);
+  el.textContent = txt; el.className = "msg " + (cls || "");
+  void el.offsetWidth; el.classList.add("show");  // reflow: fa ripartire l'animazione a ogni messaggio
+};
 
 async function health() {
   $("health").innerHTML = (await Promise.all(Object.keys(URL_).map(async k => {
@@ -61,7 +65,7 @@ async function pollOrders() {
   } catch {}
 }
 
-$("bh").onclick = () => { health(); states(); };
+$("bh").onclick = () => Promise.all([health(), states()]);
 
 $("bl").onclick = async () => {
   try {
@@ -116,5 +120,21 @@ $("bo").onclick = async () => {
   } catch { say("m3", "order-service non raggiungibile (porta 8001).", "err"); }
   clearInterval(polling); await pollOrders(); await states(); $("bo").disabled = !token;
 };
+
+// Riquadro "Dati utente per la demo": copia le credenziali nel form di login
+$("bd").onclick = () => {
+  $("u").value = "utente_prova"; $("p").value = "prova";
+  for (const id of ["u", "p"]) { const el = $(id); el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+};
+
+// Mostra lo stato "in corso" sul pulsante finché la sua richiesta non è terminata
+for (const b of document.querySelectorAll("button")) {
+  const h = b.onclick;
+  if (!h) continue;
+  b.onclick = async e => {
+    b.classList.add("busy");
+    try { await h.call(b, e); } finally { b.classList.remove("busy"); }
+  };
+}
 
 health(); states();

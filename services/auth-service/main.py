@@ -31,6 +31,11 @@ fake_users_db = {
         "username": "carlos",
         "password": "admin",
         "role": "admin"
+    },
+    "utente_prova": {
+        "username": "utente_prova",
+        "password": "prova",
+        "role": "customer"
     }
 }
 

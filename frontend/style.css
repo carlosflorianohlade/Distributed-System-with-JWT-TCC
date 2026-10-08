@@ -52,11 +52,89 @@ button {
   color: #fff;
   font: inherit;
   cursor: pointer;
+  position: relative;
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s, opacity 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background: #2f3db5;
+  box-shadow: 0 3px 10px rgba(57, 73, 208, 0.3);
+  transform: translateY(-1px);
+}
+
+/* Effetto "pressione" al click */
+button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.96);
+  box-shadow: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid rgba(57, 73, 208, 0.35);
+  outline-offset: 1px;
 }
 
 button:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
 }
+
+/* Pulsante con richiesta in corso: testo trasparente e spinner al centro */
+button.busy {
+  color: transparent;
+  pointer-events: none;
+}
+
+button.busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* Intestazione con riquadro demo in alto a destra */
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.demo {
+  background: #fffbea;
+  border: 1px solid #f0d77a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  animation: slideIn 0.4s ease both;
+}
+
+.demo button {
+  margin-top: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+input.flash {
+  animation: flash 0.8s ease;
+}
+
+section {
+  animation: fadeUp 0.35s ease both;
+}
+
+section:nth-of-type(2) { animation-delay: 0.05s; }
+section:nth-of-type(3) { animation-delay: 0.1s; }
+section:nth-of-type(4) { animation-delay: 0.15s; }
+section:nth-of-type(5) { animation-delay: 0.2s; }
 
 .row {
   display: grid;
@@ -150,4 +228,51 @@ th {
 
 .good {
   color: #1a9b60;
+}
+
+/* Animazioni */
+.msg.show {
+  animation: fadeUp 0.3s ease;
+}
+
+.dot {
+  transition: background 0.3s;
+}
+
+.dot.up {
+  animation: pulse 2s ease-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes flash {
+  0%   { background: #fff3b0; }
+  100% { background: #fff; }
+}
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(26, 155, 96, 0.5); }
+  70%  { box-shadow: 0 0 0 6px rgba(26, 155, 96, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(26, 155, 96, 0); }
+}
+
+/* Chi ha disattivato le animazioni nel sistema operativo non le vede */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
